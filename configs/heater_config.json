@@ -1,0 +1,160 @@
+{
+    "config_version": "2020-03-20",
+    "devices": [
+        {
+            "name": "Water Heater",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "Name",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.name"
+                },
+                {
+                    "data_type": "bool",
+                    "name": "Power",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.power",
+                    "ui_type": "esp.ui.toggle"
+                },
+                {
+                    "bounds": {
+                        "max": 100,
+                        "min": 0,
+                        "step": 1
+                    },
+                    "data_type": "float",
+                    "name": "temperature",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.temperature",
+                    "ui_type": "esp.ui.slider"
+                },
+                {
+                    "bounds": {
+                        "max": 100,
+                        "min": 0,
+                        "step": 1
+                    },
+                    "data_type": "float",
+                    "name": "Setpoint Temperature",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.setpoint-temperature",
+                    "ui_type": "esp.ui.slider"
+                }
+            ],
+            "primary": "Power",
+            "type": "esp.device.water-heater"
+        }
+    ],
+    "info": {
+        "fw_version": "1.0",
+        "model": "water-heater",
+        "name": "ESP RainMaker Device",
+        "platform": "esp32s2",
+        "project_name": "PROJECT_NAME_PLACEHOLDER",
+        "type": "water-heater"
+    },
+    "node_id": "NODE_ID_PLACEHOLDER",
+    "services": [
+        {
+            "name": "Time",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "TZ",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.tz"
+                },
+                {
+                    "data_type": "string",
+                    "name": "TZ-POSIX",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.tz_posix"
+                }
+            ],
+            "type": "esp.service.time"
+        },
+        {
+            "name": "Schedule",
+            "params": [
+                {
+                    "bounds": {
+                        "max": 10
+                    },
+                    "data_type": "array",
+                    "name": "Schedules",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.schedules"
+                }
+            ],
+            "type": "esp.service.schedule"
+        },
+        {
+            "attributes": [
+                {
+                    "name": "deactivation_support",
+                    "value": "no"
+                }
+            ],
+            "name": "Scenes",
+            "params": [
+                {
+                    "bounds": {
+                        "max": 10
+                    },
+                    "data_type": "array",
+                    "name": "Scenes",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.scenes"
+                }
+            ],
+            "type": "esp.service.scenes"
+        },
+        {
+            "name": "Local Control",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "POP",
+                    "properties": [
+                        "read"
+                    ],
+                    "type": "esp.param.local_control_pop"
+                },
+                {
+                    "data_type": "int",
+                    "name": "Type",
+                    "properties": [
+                        "read"
+                    ],
+                    "type": "esp.param.local_control_type"
+                }
+            ],
+            "type": "esp.service.local_control"
+        }
+    ]
+}

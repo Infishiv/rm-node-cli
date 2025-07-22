@@ -1,0 +1,163 @@
+{
+    "attributes": [
+        {
+            "name": "cmd-resp",
+            "value": "1"
+        }
+    ],
+    "config_version": "2020-03-20",
+    "devices": [
+        {
+            "name": "Washer",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "Name",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.name"
+                },
+                {
+                    "name": "Power",
+                    "type": "esp.param.power",
+                    "data_type": "bool",
+                    "properties": [
+                        "read",
+                        "write"
+                    ]
+                },
+                {
+                    "name": "Running State",
+                    "type": "esp.param.running-state",
+                    "data_type": "bool",
+                    "properties": [
+                        "read",
+                        "write"
+                    ]
+                },
+                {
+                    "name": "Paused",
+                    "type": "esp.param.paused-state",
+                    "data_type": "bool",
+                    "properties": [
+                        "read",
+                        "write"
+                    ]
+                },
+                {
+                    "data_type": "string",
+                    "name": "Run cycle",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": " esp.param.run-cycle",
+                    "ui_type": "esp.ui.toggle"
+                }
+            ],
+            "primary": "Power",
+            "type": "esp.device.washer"
+        }
+    ],
+    "info": {
+        "fw_version": "1.0",
+        "model": "Washer",
+        "name": "ESP RainMaker Device",
+        "platform": "esp32C4",
+        "project_name": "PROJECT_NAME_PLACEHOLDER",
+        "type": "washer"
+    },
+    "node_id": "NODE_ID_PLACEHOLDER",
+    "services": [
+        {
+            "name": "Time",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "TZ",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.tz"
+                },
+                {
+                    "data_type": "string",
+                    "name": "TZ-POSIX",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.tz_posix"
+                }
+            ],
+            "type": "esp.service.time"
+        },
+        {
+            "name": "Schedule",
+            "params": [
+                {
+                    "bounds": {
+                        "max": 10
+                    },
+                    "data_type": "array",
+                    "name": "Schedules",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.schedules"
+                }
+            ],
+            "type": "esp.service.schedule"
+        },
+        {
+            "attributes": [
+                {
+                    "name": "deactivation_support",
+                    "value": "no"
+                }
+            ],
+            "name": "Scenes",
+            "params": [
+                {
+                    "bounds": {
+                        "max": 10
+                    },
+                    "data_type": "array",
+                    "name": "Scenes",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.scenes"
+                }
+            ],
+            "type": "esp.service.scenes"
+        },
+        {
+            "name": "Local Control",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "POP",
+                    "properties": [
+                        "read"
+                    ],
+                    "type": "esp.param.local_control_pop"
+                },
+                {
+                    "data_type": "int",
+                    "name": "Type",
+                    "properties": [
+                        "read"
+                    ],
+                    "type": "esp.param.local_control_type"
+                }
+            ],
+            "type": "esp.service.local_control"
+        }
+    ]
+}

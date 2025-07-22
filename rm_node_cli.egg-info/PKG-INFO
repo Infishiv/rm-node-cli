@@ -1,0 +1,41 @@
+Metadata-Version: 2.4
+Name: rm-node-cli
+Version: 1.0.0
+Summary: RM-Node CLI - Efficient MQTT Node Management for ESP RainMaker
+Home-page: https://github.com/espressif/rm-node-cli
+Author: ESP Team
+Author-email: esp-support@example.com
+Project-URL: Bug Reports, https://github.com/espressif/rm-node-cli/issues
+Project-URL: Source, https://github.com/espressif/rm-node-cli
+Project-URL: Documentation, https://docs.espressif.com/projects/esp-rainmaker/
+Keywords: mqtt iot esp32 rainmaker cli embedded
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Software Development :: Embedded Systems
+Classifier: Topic :: System :: Networking
+Classifier: Topic :: Communications
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.0.0
+Requires-Dist: AWSIoTPythonSDK>=1.4.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: project-url
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+RM-Node CLI - Efficient MQTT Node Management

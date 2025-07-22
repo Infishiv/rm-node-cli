@@ -1,0 +1,2 @@
+[console_scripts]
+rm-node = rm_node_cli.rmnode_cli:main
