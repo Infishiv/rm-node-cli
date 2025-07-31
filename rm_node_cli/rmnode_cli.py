@@ -12,22 +12,27 @@ This is the main entry point that:
 
 import click
 import asyncio
-import logging
+import json
 import sys
 import os
+import time
 import signal
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional
-
-# Import CLI components
-from mqtt_cli.utils.config_manager import ConfigManager
-from mqtt_cli.utils.cert_finder import find_node_cert_key_pairs
-from mqtt_cli.utils.debug_logger import debug_log, debug_step
-from mqtt_cli.core.mqtt_client import MQTTOperations
-from mqtt_cli.utils.connection_manager import ConnectionManager
+from typing import Optional, Dict, Any, List, Tuple
+from .mqtt_operations import MQTTOperations
+from .utils.config_manager import ConfigManager
+from .utils.connection_manager import ConnectionManager
+from .utils.debug_logger import debug_log, debug_step
+from .utils.exceptions import MQTTConnectionError
+from .utils.cert_finder import find_node_cert_key_pairs, find_by_mac_address, find_certificates_in_directory
+from .utils.logger import setup_logging, get_logger, log_crash, log_monitoring_issue
 
 # Get logger
 logger = logging.getLogger(__name__)
+
+# Global shutdown event
+shutdown_event = asyncio.Event()
 
 class RMNodeManager:
     """Manages all node connections and background operations."""
@@ -37,67 +42,225 @@ class RMNodeManager:
         self.config_manager = ConfigManager(config_dir)
         self.connections: Dict[str, MQTTOperations] = {}
         self.broker_url: Optional[str] = None
-        self.cert_path: Optional[str] = None
+        self.cert_paths: List[str] = []  # Support multiple paths
         self.running = True
+        
+        # Background task for maintaining connections
+        self.connection_task = None
+        self.is_running = False
+        
+        # OTA job storage - two files system
+        self.ota_jobs_file = os.path.join(config_dir, "ota_jobs.json")
+        self.ota_status_history_file = os.path.join(config_dir, "ota_status_history.json")
+        self.ota_jobs = self._load_ota_jobs()
+        self.ota_status_history = self._load_ota_status_history()
         
     @debug_step("Discovering nodes")
     def discover_nodes(self) -> List[tuple]:
-        """Discover all nodes from certificate directory."""
-        if not self.cert_path:
-            raise Exception("Certificate path not set")
+        """Discover all nodes from multiple certificate directories using threading."""
+        if not self.cert_paths:
+            raise Exception("Certificate paths not set")
             
-        nodes = find_node_cert_key_pairs(Path(self.cert_path))
-        if not nodes:
-            raise Exception(f"No nodes found in {self.cert_path}")
+        all_nodes = []
+        
+        # Import threading modules
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        def discover_nodes_in_path(cert_path: str) -> List[tuple]:
+            """Discover nodes in a single certificate path."""
+            try:
+                path_nodes = []
+                cert_path_obj = Path(cert_path)
+                
+                # Method 1: Try MAC address directory structure first
+                logger.debug(f"Trying MAC address directory structure in {cert_path}")
+                mac_results = find_by_mac_address(cert_path_obj)
+                if mac_results:
+                    logger.debug(f"Found {len(mac_results)} nodes in MAC directory structure in {cert_path}")
+                    path_nodes.extend(mac_results)
+                
+                # Method 2: Try node_details structure
+                logger.debug(f"Trying node_details structure in {cert_path}")
+                try:
+                    # First check if we're already in a node_details structure
+                    cert_pairs = find_certificates_in_directory(cert_path_obj)
+                    if cert_pairs:
+                        logger.debug(f"Found {len(cert_pairs)} nodes in directory structure in {cert_path}")
+                        path_nodes.extend(cert_pairs)
+                        
+                    # Then try traditional node_details search
+                    node_pairs = find_node_cert_key_pairs(cert_path)
+                    if node_pairs:
+                        logger.debug(f"Found {len(node_pairs)} nodes in node_details structure in {cert_path}")
+                        path_nodes.extend(node_pairs)
+                except Exception as e:
+                    logger.debug(f"Error in node_details search in {cert_path}: {str(e)}")
+                
+                return path_nodes
+            except Exception as e:
+                logger.debug(f"Error discovering nodes in {cert_path}: {str(e)}")
+                return []
+        
+        # Use ThreadPoolExecutor to discover nodes in parallel
+        with ThreadPoolExecutor(max_workers=min(len(self.cert_paths), 4)) as executor:
+            # Submit all discovery tasks
+            future_to_path = {executor.submit(discover_nodes_in_path, path): path for path in self.cert_paths}
             
-        logger.debug(f"Discovered {len(nodes)} nodes")
-        return nodes
+            # Collect results as they complete
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    path_nodes = future.result()
+                    all_nodes.extend(path_nodes)
+                    logger.debug(f"Completed discovery in {path}: {len(path_nodes)} nodes found")
+                except Exception as e:
+                    logger.debug(f"Error in discovery thread for {path}: {str(e)}")
+        
+        # Remove duplicates based on node_id
+        unique_nodes = {}
+        for node_id, cert_path, key_path in all_nodes:
+            if node_id not in unique_nodes:
+                unique_nodes[node_id] = (node_id, cert_path, key_path)
+        
+        final_nodes = list(unique_nodes.values())
+        
+        if not final_nodes:
+            paths_str = ", ".join(self.cert_paths)
+            raise Exception(f"No nodes found in any of the certificate paths: {paths_str}")
+            
+        logger.debug(f"Discovered {len(final_nodes)} unique nodes across {len(self.cert_paths)} paths")
+        return final_nodes
         
     @debug_step("Connecting to all nodes")
-    async def connect_all_nodes(self) -> bool:
-        """Connect to all discovered nodes."""
+    async def connect_all_nodes(self) -> Tuple[int, int]:
+        """Connect to all discovered nodes concurrently."""
         try:
             nodes = self.discover_nodes()
-            connected_count = 0
             
+            # Create connection tasks for all nodes
+            connection_tasks = []
             for node_id, cert_path, key_path in nodes:
-                try:
-                    logger.debug(f"Connecting to node: {node_id}")
-                    
-                    # Create MQTT client for this node
-                    mqtt_client = MQTTOperations(
-                        broker=self.broker_url,
-                        node_id=node_id,
-                        cert_path=cert_path,
-                        key_path=key_path
-                    )
-                    
-                    # Connect
-                    if mqtt_client.connect():
-                        self.connections[node_id] = mqtt_client
-                        # Store node config
-                        self.config_manager.add_node(node_id, cert_path, key_path)
-                        connected_count += 1
-                        click.echo(click.style(f"✓ Connected to {node_id}", fg='green'))
-                    else:
-                        click.echo(click.style(f"✗ Failed to connect to {node_id}", fg='red'))
-                        
-                except Exception as e:
-                    logger.debug(f"Error connecting to {node_id}: {str(e)}")
-                    click.echo(click.style(f"✗ Error connecting to {node_id}: {str(e)}", fg='red'))
-                    
+                task = self._connect_node(node_id, cert_path, key_path)
+                connection_tasks.append(task)
+                
+            # Wait for all connections to complete
+            results = await asyncio.gather(*connection_tasks, return_exceptions=True)
+            
+            # Count successful connections
+            connected_count = sum(1 for result in results if result)
+            
             if connected_count == 0:
                 click.echo(click.style("✗ No nodes connected successfully", fg='red'))
-                return False
+                return 0, len(nodes)
                 
             click.echo(click.style(f"✓ Connected to {connected_count}/{len(nodes)} nodes", fg='green'))
-            return True
+            return connected_count, len(nodes)
             
         except Exception as e:
             logger.debug(f"Error in connect_all_nodes: {str(e)}")
             click.echo(click.style(f"✗ Error: {str(e)}", fg='red'))
-            return False
+            return 0, 0
+
+    async def _connect_node(self, node_id: str, cert_path: str, key_path: str) -> bool:
+        """Connect to a single node asynchronously with retry logic."""
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        # Get logger for connection logging
+        try:
+            logger_instance = get_logger()
+            mqtt_logger = logger_instance.mqtt_logger
+        except:
+            mqtt_logger = logging.getLogger("rm_node_cli.mqtt")
+        
+        for attempt in range(max_retries):
+            try:
+                mqtt_logger.debug(f"Connecting to node: {node_id} (attempt {attempt + 1}/{max_retries})")
+                
+                # Create MQTT client for this node
+                mqtt_client = MQTTOperations(
+                    broker=self.broker_url,
+                    node_id=node_id,
+                    cert_path=cert_path,
+                    key_path=key_path
+                )
+                
+                # Connect asynchronously
+                if await mqtt_client.connect_async():
+                    self.connections[node_id] = mqtt_client
+                    # Store node config
+                    self.config_manager.add_node(node_id, cert_path, key_path)
+                    click.echo(click.style(f"✓ Connected to {node_id}", fg='green'))
+                    return True
+                else:
+                    if attempt < max_retries - 1:
+                        click.echo(click.style(f"✗ Failed to connect to {node_id} (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...", fg='yellow'))
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        click.echo(click.style(f"✗ Failed to connect to {node_id} after {max_retries} attempts", fg='red'))
+                        return False
+                        
+            except Exception as e:
+                mqtt_logger.debug(f"Error connecting to {node_id} (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                
+                # Log connection issue
+                try:
+                    logger_instance.log_connection_issue(node_id, str(e), attempt + 1)
+                except:
+                    pass
+                
+                if attempt < max_retries - 1:
+                    click.echo(click.style(f"✗ Error connecting to {node_id} (attempt {attempt + 1}/{max_retries}): {str(e)}", fg='yellow'))
+                    click.echo(click.style(f"Retrying in {retry_delay}s...", fg='yellow'))
+                    await asyncio.sleep(retry_delay)
+                else:
+                    click.echo(click.style(f"✗ Failed to connect to {node_id} after {max_retries} attempts: {str(e)}", fg='red'))
+                    return False
+        
+        return False
+
+    async def start_background_connections(self):
+        """Start background task to maintain connections to all nodes."""
+        if self.connection_task is not None:
+            return
             
+        self.is_running = True
+        self.connection_task = asyncio.create_task(self._maintain_connections())
+        
+    async def stop_background_connections(self):
+        """Stop the background connection maintenance task."""
+        self.is_running = False
+        if self.connection_task:
+            self.connection_task.cancel()
+            try:
+                await self.connection_task
+            except asyncio.CancelledError:
+                pass
+            self.connection_task = None
+
+    async def _maintain_connections(self):
+        """Background task to maintain connections to all nodes."""
+        while self.is_running and not shutdown_event.is_set():
+            try:
+                nodes = self.discover_nodes()
+                
+                # Check and reconnect disconnected nodes
+                for node_id, cert_path, key_path in nodes:
+                    if node_id not in self.connections or not self.connections[node_id].is_connected():
+                        logger.debug(f"Attempting to reconnect to {node_id}")
+                        await self._connect_node(node_id, cert_path, key_path)
+                
+                # Wait before next check
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    continue
+                
+            except Exception as e:
+                logger.error(f"Error in connection maintenance: {str(e)}")
+                await asyncio.sleep(5)  # Short delay on error
+
     @debug_step("Starting background listeners")
     async def start_background_listeners(self):
         """Start background listeners for all important topics."""
@@ -106,11 +269,9 @@ class RMNodeManager:
             
         # Topics to subscribe to for all nodes
         topics = [
-            "params/remote",      # Parameter responses
-            "otaurl",            # OTA responses
-            "to-cloud",          # Command responses  
-            "status",            # Status updates
-            "alert"              # User alerts
+            "params/remote",      # Parameter responses from nodes
+            "otaurl",            # OTA URL responses from nodes
+            "to-node",           # Command requests to nodes (we monitor)
         ]
         
         def create_message_handler(node_id: str, topic_suffix: str):
@@ -122,26 +283,75 @@ class RMNodeManager:
                     node_color = click.style(f"[{node_id}]", fg='cyan')
                     topic_color = click.style(f"[{topic_suffix}]", fg='yellow')
                     click.echo(f"{timestamp} {node_color} {topic_color} {payload}")
+                    
+                    # Special handling for OTA URL responses
+                    if topic_suffix == "otaurl":
+                        try:
+                            ota_response = json.loads(payload)
+                            if self.store_ota_job(node_id, ota_response):
+                                click.echo(click.style(f"✓ Stored OTA job {ota_response.get('ota_job_id', 'unknown')} for {node_id}", fg='green'))
+                        except json.JSONDecodeError:
+                            logger.debug(f"Invalid JSON in OTA response from {node_id}")
+                        except Exception as e:
+                            logger.debug(f"Error processing OTA response from {node_id}: {str(e)}")
+                    
+                    # Store node responses from to-node topic
+                    elif topic_suffix == "to-node":
+                        try:
+                            response_data = json.loads(payload)
+                            # Store in persistent shell if available
+                            if hasattr(self, 'shell') and hasattr(self.shell, '_store_node_response'):
+                                self.shell._store_node_response(node_id, response_data)
+                                click.echo(click.style(f"✓ Stored node response for {node_id}", fg='green'))
+                        except json.JSONDecodeError:
+                            logger.debug(f"Invalid JSON in node response from {node_id}")
+                        except Exception as e:
+                            logger.debug(f"Error processing node response from {node_id}: {str(e)}")
+                    
+                    # Store remote parameters from params/remote topic
+                    elif topic_suffix == "params/remote":
+                        try:
+                            params_data = json.loads(payload)
+                            # Store in persistent shell if available
+                            if hasattr(self, 'shell') and hasattr(self.shell, '_store_remote_params'):
+                                self.shell._store_remote_params(node_id, params_data)
+                                click.echo(click.style(f"✓ Stored remote params for {node_id}", fg='green'))
+                        except json.JSONDecodeError:
+                            logger.debug(f"Invalid JSON in remote params from {node_id}")
+                        except Exception as e:
+                            logger.debug(f"Error processing remote params from {node_id}: {str(e)}")
+                            
                 except Exception as e:
                     logger.debug(f"Error handling message from {node_id}: {str(e)}")
             return handler
         
         # Subscribe to all topics for all connected nodes
+        success_count = 0
         for node_id, mqtt_client in self.connections.items():
+            node_success = True
             for topic_suffix in topics:
                 full_topic = f"node/{node_id}/{topic_suffix}"
                 handler = create_message_handler(node_id, topic_suffix)
                 
                 try:
-                    if mqtt_client.subscribe(full_topic, qos=1, callback=handler):
+                    if await mqtt_client.subscribe_async(full_topic, qos=1, callback=handler):
                         logger.debug(f"Subscribed to {full_topic}")
                     else:
                         logger.debug(f"Failed to subscribe to {full_topic}")
+                        node_success = False
                 except Exception as e:
                     logger.debug(f"Error subscribing to {full_topic}: {str(e)}")
+                    node_success = False
+            
+            if node_success:
+                success_count += 1
                     
-        click.echo(click.style(f"✓ Started background listeners for {len(self.connections)} nodes", fg='green'))
-        
+        # Show a single summary message
+        if success_count == len(self.connections):
+            click.echo(click.style(f"✓ Started monitoring {len(topics)} topics on {success_count} connected nodes", fg='green'))
+        else:
+            click.echo(click.style(f"⚠ Started monitoring with partial success: {success_count}/{len(self.connections)} nodes", fg='yellow'))
+
     def publish_to_all(self, topic_suffix: str, payload: str, qos: int = 1) -> int:
         """Publish message to all connected nodes."""
         success_count = 0
@@ -157,119 +367,386 @@ class RMNodeManager:
                 logger.debug(f"Error publishing to {node_id}: {str(e)}")
         return success_count
         
-    def publish_to_node(self, node_id: str, topic_suffix: str, payload: str, qos: int = 1) -> bool:
-        """Publish message to specific node."""
+    async def publish_to_node(self, node_id: str, topic: str, payload, qos: int = 1) -> bool:
+        """Publish message to specific node with retry logic."""
         if node_id not in self.connections:
             return False
             
-        full_topic = f"node/{node_id}/{topic_suffix}"
-        try:
-            return self.connections[node_id].publish(full_topic, payload, qos=qos)
-        except Exception as e:
-            logger.debug(f"Error publishing to {node_id}: {str(e)}")
-            return False
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Check if connection is still alive
+                if not self.connections[node_id].is_connected():
+                    logger.debug(f"Connection lost for {node_id}, attempting reconnect (attempt {attempt + 1}/{max_retries})")
+                    # Try to reconnect using the existing client
+                    try:
+                        if self.connections[node_id].reconnect():
+                            logger.debug(f"Successfully reconnected to {node_id}")
+                        else:
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            else:
+                                logger.debug(f"Failed to reconnect to {node_id} after {max_retries} attempts")
+                                return False
+                    except Exception as reconnect_error:
+                        logger.debug(f"Reconnect error for {node_id}: {str(reconnect_error)}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        else:
+                            return False
+                
+                # Try to publish
+                result = await self.connections[node_id].publish_async(topic, payload, qos=qos)
+                if result:
+                    return True
+                else:
+                    if attempt < max_retries - 1:
+                        logger.debug(f"Publish failed for {node_id} (attempt {attempt + 1}/{max_retries}), retrying...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.debug(f"Failed to publish to {node_id} after {max_retries} attempts")
+                        return False
+                        
+            except Exception as e:
+                logger.debug(f"Error publishing to {node_id} (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    return False
+        
+        return False
             
     def get_connected_nodes(self) -> List[str]:
         """Get list of connected node IDs."""
-        return list(self.connections.keys())
+        return [node_id for node_id, client in self.connections.items() if client.is_connected()]
         
+    def _load_ota_jobs(self) -> Dict[str, Dict[str, Any]]:
+        """Load OTA jobs from JSON file."""
+        try:
+            if os.path.exists(self.ota_jobs_file):
+                with open(self.ota_jobs_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.debug(f"Error loading OTA jobs: {str(e)}")
+        return {}
+        
+    def _save_ota_jobs(self):
+        """Save OTA jobs to JSON file."""
+        try:
+            with open(self.ota_jobs_file, 'w') as f:
+                json.dump(self.ota_jobs, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Error saving OTA jobs: {str(e)}")
+            
+    def _load_ota_status_history(self) -> Dict[str, Dict[str, Any]]:
+        """Load OTA status history from JSON file."""
+        try:
+            if os.path.exists(self.ota_status_history_file):
+                with open(self.ota_status_history_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.debug(f"Error loading OTA status history: {str(e)}")
+        return {}
+        
+    def _save_ota_status_history(self):
+        """Save OTA status history to JSON file."""
+        try:
+            with open(self.ota_status_history_file, 'w') as f:
+                json.dump(self.ota_status_history, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Error saving OTA status history: {str(e)}")
+            
+    def store_ota_job(self, node_id: str, ota_response: Dict[str, Any]):
+        """Store OTA job information from response."""
+        try:
+            # Extract OTA job ID from response
+            ota_job_id = ota_response.get('ota_job_id')
+            if not ota_job_id:
+                logger.debug("No ota_job_id found in response")
+                return False
+                
+            # Initialize node entry if it doesn't exist
+            if node_id not in self.ota_jobs:
+                self.ota_jobs[node_id] = {}
+                
+            # Store the OTA job with timestamp
+            self.ota_jobs[node_id][ota_job_id] = {
+                **ota_response,
+                'timestamp': int(time.time() * 1000),
+                'received_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            # Save to file
+            self._save_ota_jobs()
+            
+            logger.debug(f"Stored OTA job {ota_job_id} for node {node_id}")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error storing OTA job: {str(e)}")
+            return False
+            
+    def get_ota_jobs(self, node_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get stored OTA jobs, optionally filtered by node ID."""
+        if node_id:
+            return self.ota_jobs.get(node_id, {})
+        return self.ota_jobs
+        
+    def clear_ota_jobs(self, node_id: Optional[str] = None):
+        """Clear OTA jobs, optionally for a specific node."""
+        if node_id:
+            if node_id in self.ota_jobs:
+                del self.ota_jobs[node_id]
+                self._save_ota_jobs()
+        else:
+            self.ota_jobs = {}
+            self._save_ota_jobs()
+            
+    def move_ota_job_to_history(self, node_id: str, job_id: str, status: str):
+        """Move OTA job from primary to history with status."""
+        if node_id in self.ota_jobs and job_id in self.ota_jobs[node_id]:
+            # Get the job data
+            job_data = self.ota_jobs[node_id][job_id].copy()
+            
+            # Add status and timestamp
+            job_data['ota_status'] = status
+            job_data['status_timestamp'] = int(time.time() * 1000)
+            job_data['status_received_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Initialize history entry if needed
+            if node_id not in self.ota_status_history:
+                self.ota_status_history[node_id] = {}
+            
+            # Move to history
+            self.ota_status_history[node_id][job_id] = job_data
+            
+            # Remove from primary
+            del self.ota_jobs[node_id][job_id]
+            
+            # Clean up empty node entries
+            if not self.ota_jobs[node_id]:
+                del self.ota_jobs[node_id]
+            
+            # Save both files
+            self._save_ota_jobs()
+            self._save_ota_status_history()
+            
+            logger.debug(f"Moved OTA job {job_id} for node {node_id} to history with status {status}")
+            return True
+        return False
+        
+    def get_ota_status_history(self, node_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get OTA status history, optionally filtered by node ID."""
+        if node_id:
+            return self.ota_status_history.get(node_id, {})
+        return self.ota_status_history
+
+    async def disconnect_all_nodes(self):
+        """Disconnect from all connected nodes."""
+        logger.debug("Disconnecting from all nodes...")
+        
+        if not self.connections:
+            logger.debug("No connections to disconnect")
+            return 0, 0
+            
+        # Create disconnect tasks for all nodes
+        disconnect_tasks = []
+        for node_id in list(self.connections.keys()):
+            task = self._disconnect_single_node(node_id)
+            disconnect_tasks.append(task)
+            
+        if disconnect_tasks:
+            # Wait for all disconnect operations to complete
+            results = await asyncio.gather(*disconnect_tasks, return_exceptions=True)
+            
+            # Count successful disconnections
+            success_count = sum(1 for result in results if result and not isinstance(result, Exception))
+            failed_count = len(results) - success_count
+            
+            logger.debug(f"Disconnected from {success_count}/{len(results)} nodes")
+            return success_count, len(results)
+        
+        return 0, 0
+
+    async def _disconnect_single_node(self, node_id: str) -> bool:
+        """Disconnect from a single node."""
+        try:
+            if node_id in self.connections:
+                client = self.connections[node_id]
+                
+                # Disconnect the client
+                if await client.disconnect_async():
+                    # Remove from manager connections
+                    del self.connections[node_id]
+                    logger.debug(f"Successfully disconnected from {node_id}")
+                    return True
+                else:
+                    logger.debug(f"Failed to disconnect from {node_id}")
+                    return False
+            else:
+                logger.debug(f"Node {node_id} is not connected")
+                return False
+        except Exception as e:
+            logger.error(f"Error disconnecting from {node_id}: {str(e)}")
+            return False
+
     async def cleanup(self):
-        """Clean up all connections."""
+        """Clean up by stopping background tasks and disconnecting from all nodes."""
+        logger.debug("Starting cleanup...")
         self.running = False
-        for node_id, mqtt_client in self.connections.items():
-            try:
-                mqtt_client.disconnect()
-                logger.debug(f"Disconnected from {node_id}")
-            except Exception as e:
-                logger.debug(f"Error disconnecting from {node_id}: {str(e)}")
-        self.connections.clear()
+        
+        # Set shutdown event to stop background tasks
+        shutdown_event.set()
+        
+        # Disconnect from all nodes
+        success_count, total_count = await self.disconnect_all_nodes()
+        logger.debug(f"Disconnected from {success_count}/{total_count} nodes during cleanup")
+        
+        # Stop background connections
+        await self.stop_background_connections()
+        
+        logger.debug("Cleanup completed")
 
 # Global manager instance
 manager: Optional[RMNodeManager] = None
+loop: Optional[asyncio.AbstractEventLoop] = None
+
+def handle_exception(loop, context):
+    """Handle exceptions in the event loop."""
+    msg = context.get("exception", context["message"])
+    logger.error(f"Caught exception: {msg}")
+
+def cleanup_and_exit():
+    """Clean up and exit the program."""
+    if manager and loop:
+        try:
+            if loop.is_running():
+                # Schedule cleanup of background tasks
+                future = asyncio.run_coroutine_threadsafe(manager.cleanup(), loop)
+                # Wait briefly for cleanup
+                future.result(timeout=2)
+            else:
+                # If loop is not running, run cleanup directly
+                loop.run_until_complete(manager.cleanup())
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+    sys.exit(0)
 
 def signal_handler(signum, frame):
     """Handle interrupt signals."""
-    global manager
-    click.echo("\n\nShutting down...")
-    if manager:
-        asyncio.create_task(manager.cleanup())
-    sys.exit(0)
+    click.echo("\nExiting...")
+    cleanup_and_exit()
 
 @click.command()
-@click.option('--cert-path', required=True, 
-              help='Path to certificates directory containing node certificates')
-@click.option('--broker-id', required=True,
-              help='MQTT broker URL (e.g., mqtts://broker.example.com:8883)')
+@click.option('--cert-path', required=True, multiple=True,
+              help='Path to certificates directory containing node certificates (can specify multiple times)')
+@click.option('--broker-id', default='mqtts://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com/',
+              help='MQTT broker URL (default: mqtts://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com/)')
 @click.option('--config-dir', default='.rm-node',
               help='Configuration directory (default: .rm-node)')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
 @debug_log
-def main(cert_path: str, broker_id: str, config_dir: str, debug: bool):
+def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: bool):
     """
     RM-Node CLI - Efficient MQTT Node Management
     
     Connect to all nodes and start an interactive shell for managing them.
     
     Examples:
+        rm-node --cert-path /path/to/certs
         rm-node --cert-path /path/to/certs --broker-id mqtts://broker.example.com:8883
+        rm-node --cert-path /path1/certs --cert-path /path2/certs
     """
-    global manager
+    global manager, loop
     
     try:
-        # Set up signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        
-        # Configure logging
-        if debug:
-            logging.basicConfig(level=logging.DEBUG)
-        else:
-            logging.basicConfig(level=logging.INFO)
-            
         # Create configuration directory
         config_path = Path(config_dir).resolve()
         config_path.mkdir(exist_ok=True)
         
+        # Setup professional logging system
+        log_level = "DEBUG" if debug else "INFO"
+        logger = setup_logging(str(config_path), log_level)
+        app_logger = logger.app_logger
+        
         # Initialize manager
         manager = RMNodeManager(str(config_path))
         manager.broker_url = broker_id
-        manager.cert_path = cert_path
+        manager.cert_paths = list(cert_path)  # Store multiple paths
         
         # Store configuration
         manager.config_manager.set_broker(broker_id)
-        manager.config_manager.set_cert_path(cert_path)
+        manager.config_manager.set_cert_paths(cert_path)  # Store multiple paths
+        
+        app_logger.info("RM-Node CLI Starting...")
+        app_logger.info(f"Certificate paths: {', '.join(cert_path)}")
+        app_logger.info(f"Broker: {broker_id}")
+        app_logger.info(f"Config directory: {config_path}")
         
         click.echo(click.style("RM-Node CLI Starting...", fg='green', bold=True))
-        click.echo(f"Certificate path: {cert_path}")
+        click.echo(f"Certificate paths: {', '.join(cert_path)}")
         click.echo(f"Broker: {broker_id}")
         click.echo(f"Config directory: {config_path}")
         click.echo("-" * 60)
         
         # Create event loop and run async operations
         async def setup_and_run():
-            # Connect to all nodes
-            if not await manager.connect_all_nodes():
-                click.echo(click.style("✗ Failed to connect to any nodes", fg='red'))
-                sys.exit(1)
+            try:
+                # Connect to all nodes
+                connected_count, total_nodes = await manager.connect_all_nodes()
+                if connected_count == 0:
+                    click.echo(click.style("✗ Failed to connect to any nodes", fg='red'))
+                    sys.exit(1)
+                    
+                # Start background listeners
+                await manager.start_background_listeners()
                 
-            # Start background listeners
-            await manager.start_background_listeners()
-            
-            # Import and start the interactive shell
-            from rm_node_cli.persistent_shell import start_interactive_shell
-            await start_interactive_shell(manager)
-            
+                # Set debug level for persistent shell if debug mode is enabled
+                if debug:
+                    logger.shell_logger.setLevel(logging.DEBUG)
+                    click.echo(click.style("🔍 Debug mode enabled for interactive shell", fg='yellow'))
+                    app_logger.info("Debug mode enabled for interactive shell")
+                
+                # Import and start the interactive shell
+                from .persistent_shell import start_interactive_shell
+                await start_interactive_shell(manager, str(config_path))
+            finally:
+                # Ensure cleanup happens
+                await manager.cleanup()
+        
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # Create and configure event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.set_exception_handler(handle_exception)
+        
         # Run the async setup
-        asyncio.run(setup_and_run())
+        loop.run_until_complete(setup_and_run())
         
     except KeyboardInterrupt:
+        app_logger.info("Shutdown requested by user")
         click.echo("\n\nShutdown requested by user")
+        cleanup_and_exit()
     except Exception as e:
+        # Log the crash with full context
+        log_crash(e, context="main_function")
+        app_logger.error(f"Critical error in main function: {str(e)}")
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'))
+        cleanup_and_exit()
         sys.exit(1)
     finally:
-        if manager:
-            asyncio.run(manager.cleanup())
-
-if __name__ == '__main__':
-    main() 
+        # Cleanup logging
+        try:
+            logger.cleanup()
+        except Exception as cleanup_error:
+            print(f"Error during logging cleanup: {cleanup_error}")
+        
+        if loop:
+            loop.close() 

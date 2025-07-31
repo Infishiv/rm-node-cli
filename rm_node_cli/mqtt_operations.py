@@ -7,13 +7,13 @@ import json
 import time
 import logging
 import os
+import asyncio
 from pathlib import Path
 import AWSIoTPythonSDK
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
 from typing import Optional, Dict, Any, Callable
 import click
 import sys
-from .utils.exceptions import MQTTOperationsException
 
 PORT = 443
 OPERATION_TIMEOUT = 30
@@ -46,6 +46,7 @@ class MQTTOperations:
         self.connected = False
         self.last_ping = 0
         self.ping_interval = 30  # Check connection every 30 seconds
+        self._connect_lock = asyncio.Lock()
 
         # Disable all AWS IoT SDK logging
         for logger_name in ['AWSIoTPythonSDK', 
@@ -75,6 +76,26 @@ class MQTTOperations:
         self.mqtt_client.configureConnectDisconnectTimeout(10)  # 10 sec
         self.mqtt_client.configureMQTTOperationTimeout(30)  # 30 sec instead of 5 sec
 
+    async def _check_connection_async(self):
+        """Check connection status asynchronously."""
+        try:
+            # Only check every ping_interval seconds
+            current_time = time.time()
+            if current_time - self.last_ping < self.ping_interval:
+                return self.connected
+                
+            # Try to publish to a test topic
+            test_topic = f"$aws/things/{self.node_id}/ping"
+            result = await self.publish_async(test_topic, "", 0)
+            
+            self.connected = bool(result)
+            self.last_ping = current_time
+            return self.connected
+            
+        except Exception as e:
+            self.connected = False
+            return False
+
     def _check_connection(self):
         """Check connection status by attempting to publish to a test topic."""
         try:
@@ -95,6 +116,23 @@ class MQTTOperations:
             self.connected = False
             return False
 
+    async def connect_async(self):
+        """Connect to MQTT broker asynchronously with status tracking"""
+        async with self._connect_lock:
+            try:
+                if not self.connected:
+                    # Run connect in a thread pool since it's blocking
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, self.mqtt_client.connect)
+                    if result:
+                        self.connected = True
+                        self.last_ping = time.time()
+                    return result
+                return True
+            except Exception as e:
+                self.connected = False
+                raise MQTTOperationsException(f"Failed to connect: {str(e)}")
+
     def connect(self):
         """Connect to MQTT broker with status tracking"""
         try:
@@ -109,6 +147,17 @@ class MQTTOperations:
             self.connected = False
             raise MQTTOperationsException(f"Failed to connect: {str(e)}")
 
+    async def disconnect_async(self):
+        """Disconnect asynchronously from MQTT broker."""
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, self.mqtt_client.disconnect)
+            if result:
+                self.connected = False
+            return result
+        except Exception as e:
+            raise MQTTOperationsException(f"Failed to disconnect: {str(e)}")
+
     def disconnect(self):
         try:
             result = self.mqtt_client.disconnect()
@@ -121,6 +170,36 @@ class MQTTOperations:
     def is_connected(self):
         """Check if currently connected"""
         return self._check_connection()
+
+    async def is_connected_async(self):
+        """Check if currently connected asynchronously"""
+        return await self._check_connection_async()
+
+    async def publish_async(self, topic, payload, qos=1):
+        """Publish message asynchronously with retry logic and optional serialization"""
+        try:
+            if not await self.is_connected_async():
+                await self.connect_async()
+
+            if isinstance(payload, (dict, list)):
+                payload = json.dumps(payload)
+
+            # Use QoS 0 for status updates to avoid waiting for acknowledgment
+            if 'otastatus' in topic:
+                qos = 0
+
+            # Run publish in a thread pool since it's blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, 
+                lambda: self.mqtt_client.publish(topic, payload, qos))
+            
+            if result:
+                # Only log at debug level
+                self.logger.debug(f"Published to {topic}: {payload}")
+            return result
+        except Exception as e:
+            self.logger.error(f"Publish failed: {str(e)}")
+            raise MQTTOperationsException(f"Publish failed: {str(e)}")
 
     def publish(self, topic, payload, qos=1):
         """Publish message with retry logic and optional serialization"""
@@ -144,6 +223,31 @@ class MQTTOperations:
             self.logger.error(f"Publish failed: {str(e)}")
             raise MQTTOperationsException(f"Publish failed: {str(e)}")
 
+    async def subscribe_async(self, topic, qos=1, callback=None):
+        """Subscribe to a topic asynchronously"""
+        try:
+            if not await self.is_connected_async():
+                await self.connect_async()
+
+            if callback is None:
+                callback = self._on_message
+
+            # Ensure QoS is an integer
+            qos = int(qos)
+            
+            # Run subscribe in a thread pool since it's blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, 
+                lambda: self.mqtt_client.subscribe(topic, qos, callback))
+            
+            if result:
+                # Only log at debug level
+                self.logger.debug(f"Subscribed to {topic}")
+            return result
+        except Exception as e:
+            self.logger.error(f"Subscribe failed: {str(e)}")
+            raise MQTTOperationsException(f"Subscribe failed: {str(e)}")
+
     def subscribe(self, topic, qos=1, callback=None):
         """Subscribe to a topic"""
         try:
@@ -165,6 +269,20 @@ class MQTTOperations:
         except Exception as e:
             self.logger.error(f"Subscribe failed: {str(e)}")
             raise MQTTOperationsException(f"Subscribe failed: {str(e)}")
+
+    async def unsubscribe_async(self, topic):
+        """Unsubscribe from a topic asynchronously"""
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, 
+                lambda: self.mqtt_client.unsubscribe(topic))
+            
+            if result:
+                # Only log at debug level
+                self.logger.debug(f"Unsubscribed from {topic}")
+            return result
+        except Exception as e:
+            raise MQTTOperationsException(f"Unsubscribe failed: {str(e)}")
 
     def unsubscribe(self, topic):
         """Unsubscribe from a topic"""
@@ -189,12 +307,36 @@ class MQTTOperations:
             self.subscription_messages[message.topic] = message.payload.decode()
             self.old_msgs.setdefault(message.topic, []).append(message.payload.decode())
 
+    async def reconnect_async(self) -> bool:
+        """Attempt to reconnect to MQTT broker asynchronously."""
+        try:
+            await self.disconnect_async()
+            await asyncio.sleep(1)  # Brief delay before reconnecting
+            return await self.connect_async()
+        except Exception:
+            return False
+
     def reconnect(self) -> bool:
         """Attempt to reconnect to MQTT broker."""
         try:
             self.disconnect()
             time.sleep(1)  # Brief delay before reconnecting
             return self.connect()
+        except Exception:
+            return False
+
+    async def ping_async(self) -> bool:
+        """Check if connection is alive and ping if needed asynchronously."""
+        try:
+            current_time = time.time()
+            if current_time - self.last_ping >= self.ping_interval:
+                # Publish a ping message to a temporary topic
+                ping_topic = f"node/{self.node_id}/ping"
+                if await self.publish_async(ping_topic, json.dumps({"timestamp": current_time}), 0):
+                    self.last_ping = current_time
+                    return True
+                return False
+            return True
         except Exception:
             return False
 

@@ -38,4 +38,387 @@ Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary
 
-RM-Node CLI - Efficient MQTT Node Management
+# RM-Node CLI
+
+**Efficient MQTT Node Management for ESP RainMaker**
+
+A modern, user-friendly command-line interface for managing ESP RainMaker nodes with persistent connections, section-based command organization, and automatic background monitoring.
+
+## 🚀 Features
+
+- **Persistent Connections**: Connect to all nodes at startup and maintain connections automatically
+- **Section-Based Commands**: Organized command structure matching ESP RainMaker MQTT swagger specification
+- **Background Monitoring**: Automatic subscription to all relevant MQTT topics with real-time updates
+- **Interactive Shell**: User-friendly shell with contextual help and examples
+- **Swagger Compliant**: Uses official ESP RainMaker MQTT topics and message formats
+- **Zero Connection Management**: No need to manually connect/disconnect from nodes
+- **Multiple Certificate Paths**: Support for multiple certificate directories with threaded discovery
+- **Smart File Management**: Default configuration files with easy switching between device types
+- **Response Storage**: Automatic storage and retrieval of node responses and parameters
+- **OTA Management**: Complete OTA job tracking with history and status monitoring
+- **Session Management**: Persistent session tracking and connection history
+
+## 📋 Requirements
+
+- Python 3.7+
+- ESP RainMaker certificates
+- MQTT broker access (AWS IoT Core)
+
+## 🔧 Installation
+
+### From Source
+
+```bash
+git clone https://github.com/espressif/rm-node-cli.git
+cd rm-node-cli
+pip install -e .
+```
+
+### Dependencies
+
+The CLI requires the following Python packages:
+- `click>=8.0.0` - Command-line interface framework
+- `AWSIoTPythonSDK>=1.4.0` - AWS IoT MQTT client
+
+## 🎯 Quick Start
+
+1. **Start the CLI with your certificates:**
+   ```bash
+   # Single certificate path (uses default AWS IoT broker)
+   rm-node --cert-path /path/to/certs
+   
+   # Single certificate path with custom broker
+   rm-node --cert-path /path/to/certs --broker-id your-broker-url
+   
+   # Multiple certificate paths (discovered in parallel with threading)
+   rm-node --cert-path /path1/certs --cert-path /path2/certs
+   
+   # Multiple certificate paths with custom broker
+   rm-node --cert-path /path1/certs --cert-path /path2/certs --broker-id your-broker-url
+   ```
+
+2. **Use the interactive shell:**
+   ```bash
+   rm-node(5 nodes)> help
+   rm-node(5 nodes)> node config light
+   rm-node(5 nodes)> node params Light power=true brightness=75
+   rm-node(5 nodes)> ota fetch 1.2.3
+   ```
+
+## 📖 Global CLI Options
+
+### Command Line Options
+- `--cert-path`: Path to certificates directory (can specify multiple times)
+- `--broker-id`: MQTT broker URL (default: mqtts://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com/)
+- `--config-dir`: Configuration directory (default: .rm-node)
+- `--debug`: Enable debug logging
+
+### Shell Options
+- `--node-id`: Target specific nodes by comma-separated IDs (uses all nodes if not provided)
+- `--b` or `-b`: Use default files without specifying parameters (e.g., `config --b` uses default config file)
+
+**Examples of using `--b` flag:**
+```bash
+# Use default configuration without specifying device type
+config --b
+
+# Use default parameters without specifying device
+params --b
+
+# Use default time series data without specifying file
+tsdata --b
+
+# Use default simple time series data without specifying file
+simple-tsdata --b
+
+# The --b flag can be placed anywhere in the command
+--b config
+--b params
+--b tsdata
+```
+## 🗂️ Command Sections
+
+### NODE Commands (Configuration & Parameters)
+```bash
+config <device_type>                         # Configure node device type
+params <device> <param>=<value>              # Set device parameters
+init-params <device> <param>=<value>         # Initialize device parameters
+group-params <device> <param>=<value>        # Set group parameters
+```
+
+**Examples:**
+```bash
+config light                                 # Configure as light device
+params Light brightness=75 power=true        # Set light parameters
+init-params Light brightness=50              # Initialize light parameters
+group-params Light power=false               # Set group parameters
+```
+
+### OTA Commands (Over-The-Air Updates)
+```bash
+fetch <version>                              # Request firmware download
+send-ota-status [--job-id <id>]             # Send OTA status to nodes
+view-ota-jobs [--node-id <id>]              # View stored active OTA jobs
+view-ota-history [--node-id <id>]           # View completed OTA jobs with status
+clear-ota-jobs [--node-id <id>]             # Clear stored OTA job data
+```
+
+**Examples:**
+```bash
+fetch 1.2.3                                 # Request firmware version 1.2.3
+send-ota-status                             # Send OTA status to all nodes
+view-ota-jobs --node-id node1               # View OTA jobs for specific node
+```
+
+### TSDATA Commands (Time Series Data)
+```bash
+tsdata <json_file>                           # Send complex time series data
+simple-tsdata <json_file>                    # Send simple time series data
+```
+
+**Examples:**
+```bash
+tsdata configs/tsdata.json                  # Send complex time series data
+simple-tsdata configs/simple_tsdata.json    # Send simple time series data
+```
+
+### USER Commands (User Management & Alerts)
+```bash
+map <user_id> <secret_key>                   # Map user to nodes
+alert <message>                              # Send user alert
+```
+
+**Examples:**
+```bash
+map admin@espressif secret123                # Map user to nodes
+alert "System maintenance scheduled"          # Send alert to users
+```
+
+### DEVICE Commands (TLV Protocol)
+```bash
+send-command <role> <command> [<data>]       # Send TLV command to device
+```
+
+**Examples:**
+```bash
+send-command primary reboot                   # Send reboot command
+send-command secondary status                 # Send status command
+```
+
+### Utility Commands
+```bash
+status                                       # Show detailed connection status
+help [section]                               # Show help (general or specific)
+logs                                         # Check logs for troubleshooting
+disconnect [--node-id <id>]                  # Disconnect from nodes
+clear                                        # Clear screen
+exit                                         # Exit shell
+```
+
+## 📁 File Management System
+
+### Default Configuration Files
+The CLI includes pre-configured files for different device types:
+
+**Available Device Types:**
+- `light` - LED/lighting devices
+- `heater` - Heating/cooling devices  
+- `washer` - Washing machine devices
+
+**Default Files:**
+- `configs/light_config.json` - Light device configuration
+- `configs/light_params.json` - Light device parameters
+- `configs/heater_config.json` - Heater device configuration
+- `configs/heater_params.json` - Heater device parameters
+- `configs/washer_config.json` - Washer device configuration
+- `configs/washer_params.json` - Washer device parameters
+- `configs/tsdata.json` - Complex time series data template
+- `configs/simple_tsdata.json` - Simple time series data template
+
+### Using Default Files
+```bash
+# Use default light configuration
+config light
+
+# Use default light parameters
+params Light
+
+# Use default parameters without specifying device
+params --b
+
+# Use default time series data
+tsdata --b
+```
+
+**How the `--b` flag works:**
+- **Default File Selection**: When you use `--b`, the CLI automatically selects the appropriate default file based on the command type
+- **Smart File Detection**: The CLI determines which default file to use based on the command:
+  - `config` → Uses `configs/light_config.json` (or last used config file)
+  - `params` → Uses `configs/light_params.json` (or last used params file)
+  - `tsdata` → Uses `configs/tsdata.json` (or last used tsdata file)
+  - `simple-tsdata` → Uses `configs/simple_tsdata.json` (or last used simple tsdata file)
+- **No Parameters Needed**: The `--b` flag allows you to use default files without specifying any parameters
+- **Flexible Positioning**: The `--b` flag can be placed anywhere in the command line
+- **Session Memory**: The CLI remembers which files you've used in the current session and defaults to those
+
+### Custom Configuration Files
+You can specify custom JSON files for any command:
+```bash
+# Use custom configuration file
+config light /path/to/custom_config.json
+
+# Use custom parameters file
+params Light /path/to/custom_params.json
+
+# Use custom time series data
+tsdata /path/to/custom_tsdata.json
+```
+
+## 💾 Data Storage and Response Management
+
+### Response Storage System
+The CLI automatically stores and manages node responses in the following files:
+
+**Storage Files:**
+- `.rm-node/node_responses.json` - Node response data
+- `.rm-node/remote_params.json` - Remote parameter data
+- `.rm-node/ota_jobs.json` - Active OTA jobs
+- `.rm-node/ota_status_history.json` - OTA job history
+- `.rm-node/active_config.json` - Active session configuration
+- `.rm-node/config_history.json` - Configuration history
+
+### Session Management
+- **Active Session Tracking**: Monitors current session and node interactions
+- **Connection History**: Tracks all node connections and operations
+- **Response Caching**: Stores node responses for quick access
+- **Parameter History**: Maintains history of parameter changes
+
+### Data Retrieval
+```bash
+# View stored node responses
+status
+
+# View OTA job history
+ota view-ota-history
+
+# View connection history
+session-history
+```
+
+## 🔍 Certificate Discovery
+
+The CLI supports multiple certificate discovery methods:
+
+### Directory Structure Support
+1. **MAC Address Structure**: `certs/<mac_address>/[node.cert,node.key,node.info]`
+2. **Node Details Structure**: `certs/node_details/node-xyz-<node_id>/[node.cert,node.key]`
+
+### Multi-Path Discovery
+```bash
+# Discover from multiple certificate directories (uses default AWS IoT broker)
+rm-node --cert-path /path1/certs --cert-path /path2/certs
+
+# Discover from multiple certificate directories with custom broker
+rm-node --cert-path /path1/certs --cert-path /path2/certs --broker-id your-broker
+```
+
+### Threaded Discovery
+Certificate discovery runs in parallel threads for faster startup with multiple paths.
+
+## 📊 MQTT Topics Used
+
+The CLI uses official ESP RainMaker MQTT topics as specified in the [swagger documentation](https://swaggermqtt.rainmaker.espressif.com/):
+
+**Configuration Topics:**
+- `node/<node_id>/config` - Node configuration
+- `node/<node_id>/params/local` - Local parameters
+- `node/<node_id>/params/remote` - Remote parameters
+
+**OTA Topics:**
+- `node/<node_id>/ota/request` - OTA request
+- `node/<node_id>/ota/status` - OTA status
+
+**Time Series Topics:**
+- `node/<node_id>/tsdata` - Time series data
+- `node/<node_id>/simple-tsdata` - Simple time series data
+
+**User Management Topics:**
+- `user/<user_id>/map` - User mapping
+- `user/<user_id>/alert` - User alerts
+
+## 📁 Project Structure & Data Management
+
+### Local Data Storage (`.rm-node/`)
+
+The CLI creates a local `.rm-node/` directory to store session data, configuration history, and personal settings. This directory contains sensitive information and is **automatically excluded from version control**.
+
+**Contents of `.rm-node/`:**
+- `config.json` - Main configuration with node certificates and broker settings
+- `active_config.json` - Current active session configuration
+- `command_history.txt` - Shell command history
+- `config_history.json` - Configuration change history
+- `remote_params.json` - Remote parameter storage
+- `node_responses.json` - Stored node responses
+- `ota_jobs.json` - OTA job tracking data
+- `ota_status_history.json` - OTA status history
+- `logs/` - Application logs directory
+
+**⚠️ Security Note:** This directory contains:
+- Personal file paths and certificate locations
+- Node IDs and connection information
+- Session data and command history
+- Local configuration settings
+
+The `.gitignore` file ensures this data is never committed to version control.
+
+### Configuration Files
+
+The CLI uses several configuration files in the `configs/` directory:
+- `light_config.json` / `light_params.json` - Light device templates
+- `heater_config.json` / `heater_params.json` - Heater device templates
+- `washer_config.json` / `washer_params.json` - Washer device templates
+- `tsdata.json` / `simple_tsdata.json` - Time series data templates
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**Connection Problems:**
+```bash
+# Check connection status
+status
+
+# View detailed logs
+logs
+
+# Check for monitoring issues
+logs --monitoring
+```
+
+**Certificate Issues:**
+```bash
+# Verify certificate discovery (uses default AWS IoT broker)
+rm-node --cert-path /path/to/certs --debug
+
+# Verify certificate discovery with custom broker
+rm-node --cert-path /path/to/certs --broker-id your-broker --debug
+```
+
+**OTA Issues:**
+```bash
+# Check OTA job status
+ota view-ota-jobs
+
+# Clear OTA jobs if needed
+ota clear-ota-jobs
+```
+
+### Debug Mode
+Enable debug logging for detailed troubleshooting:
+```bash
+# Debug with default AWS IoT broker
+rm-node --cert-path /path/to/certs --debug
+
+# Debug with custom broker
+rm-node --cert-path /path/to/certs --broker-id your-broker --debug
+```

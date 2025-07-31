@@ -1,0 +1,18 @@
+{
+    "ts_data_version": "2021-09-13",
+    "ts_data": [
+      {
+        "name": "temperature",
+        "dt": "float",
+        "ow": false,
+        "records": [
+          {
+            "v": {
+              "value": 25.5
+            },
+            "t": 1648147200
+          }
+        ]
+      }
+    ]
+  }

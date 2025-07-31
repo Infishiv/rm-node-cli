@@ -1,3 +1,4 @@
+README.md
 setup.py
 rm_node_cli/__init__.py
 rm_node_cli/mqtt_operations.py
@@ -9,12 +10,14 @@ rm_node_cli.egg-info/dependency_links.txt
 rm_node_cli.egg-info/entry_points.txt
 rm_node_cli.egg-info/requires.txt
 rm_node_cli.egg-info/top_level.txt
-rm_node_cli/commands/__init__.py
-rm_node_cli/commands/device.py
-rm_node_cli/commands/node_config.py
-rm_node_cli/commands/ota.py
-rm_node_cli/commands/time_series.py
-rm_node_cli/commands/user_mapping.py
 rm_node_cli/core/__init__.py
 rm_node_cli/core/connection.py
 rm_node_cli/core/mqtt_client.py
+rm_node_cli/utils/__init__.py
+rm_node_cli/utils/cert_finder.py
+rm_node_cli/utils/config_manager.py
+rm_node_cli/utils/connection_manager.py
+rm_node_cli/utils/debug_logger.py
+rm_node_cli/utils/exceptions.py
+rm_node_cli/utils/logger.py
+rm_node_cli/utils/validators.py

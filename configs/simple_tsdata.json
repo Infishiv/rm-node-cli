@@ -1,0 +1,9 @@
+{
+    "name": "temperature",
+    "dt": "float",
+    "t": 1648147200,
+    "v": {
+      "value": 25.5
+    },
+    "d": 30
+  }
