@@ -31,10 +31,17 @@ class MQTTOperations:
         self.cert_path = cert_path
         self.key_path = key_path
         
-        # Use root.pem from our project's certs directory
+        # Use root.pem from the certificate directory or fallback to project's certs directory
         if not root_path:
-            script_dir = Path(__file__).resolve().parent.parent
-            root_path = script_dir / 'certs' / 'root.pem'
+            # First try to find root.pem in the same directory as the node certificate
+            cert_dir = Path(cert_path).parent
+            root_path = cert_dir / 'root.pem'
+            
+            # If not found there, try the project's certs directory
+            if not root_path.exists():
+                script_dir = Path(__file__).resolve().parent.parent
+                root_path = script_dir / 'certs' / 'root.pem'
+                
             if not root_path.exists():
                 raise MQTTOperationsException(f"Root CA certificate not found at {root_path}")
         
