@@ -1285,7 +1285,7 @@ class PersistentShell:
                 click.echo("Available types: light, heater, washer")
                 return
                 
-            # If no params file provided, use device-specific one
+            # If no params file provided and no direct params, use device-specific one
             if not params_file and not params:
                 params_file = os.path.join(self.configs_dir, f"{device_type}_params.json")
                 if not os.path.exists(params_file):
@@ -1298,6 +1298,10 @@ class PersistentShell:
                         click.echo(click.style("✓ Updated default file for params", fg='green'))
                     except ValueError as e:
                         click.echo(click.style(f"Warning: Could not update default: {str(e)}", fg='yellow'))
+            # If direct params are provided, don't use any params file
+            elif params:
+                # Keep params_file as None to use direct parameters
+                pass
                     
         # If params file specified
         elif params_file:
@@ -1396,7 +1400,7 @@ class PersistentShell:
                 click.echo("Available types: light, heater, washer")
                 return
                 
-            # If no params file provided, use device-specific one
+            # If no params file provided and no direct params, use device-specific one
             if not params_file and not params:
                 params_file = os.path.join(self.configs_dir, f"{device_type}_params.json")
                 if not os.path.exists(params_file):
@@ -1409,6 +1413,10 @@ class PersistentShell:
                         click.echo(click.style("✓ Updated default file for init-params", fg='green'))
                     except ValueError as e:
                         click.echo(click.style(f"Warning: Could not update default: {str(e)}", fg='yellow'))
+            # If direct params are provided, don't use any params file
+            elif params:
+                # Keep params_file as None to use direct parameters
+                pass
                     
         # If params file specified
         elif params_file:
@@ -1507,7 +1515,7 @@ class PersistentShell:
                 click.echo("Available types: light, heater, washer")
                 return
                 
-            # If no params file provided, use device-specific one
+            # If no params file provided and no direct params, use device-specific one
             if not params_file and not params:
                 params_file = os.path.join(self.configs_dir, f"{device_type}_params.json")
                 if not os.path.exists(params_file):
@@ -1520,6 +1528,10 @@ class PersistentShell:
                         click.echo(click.style("✓ Updated default file for group-params", fg='green'))
                     except ValueError as e:
                         click.echo(click.style(f"Warning: Could not update default: {str(e)}", fg='yellow'))
+            # If direct params are provided, don't use any params file
+            elif params:
+                # Keep params_file as None to use direct parameters
+                pass
                     
         # If params file specified
         elif params_file:
