@@ -296,11 +296,14 @@ class PersistentShell:
     def _get_cert_base_path(self) -> str:
         """Get certificate base path from config.json."""
         try:
-            with open('.rm-node/config.json', 'r') as f:
-                config = json.load(f)
-                return config.get("cert_path", "")
+            config_file = self.config_dir / 'config.json'
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    return config.get("cert_path", "")
         except Exception:
-            return ""
+            pass
+        return ""
             
     def _update_connection_history(self, node_id: str, action: str):
         """Update connection history with node details."""
@@ -1284,7 +1287,7 @@ class PersistentShell:
                 
             # If no params file provided, use device-specific one
             if not params_file and not params:
-                params_file = f"configs/{device_type}_params.json"
+                params_file = os.path.join(self.configs_dir, f"{device_type}_params.json")
                 if not os.path.exists(params_file):
                     click.echo(click.style(f"Params file not found for {device_type}", fg='red'))
                     return
@@ -1395,7 +1398,7 @@ class PersistentShell:
                 
             # If no params file provided, use device-specific one
             if not params_file and not params:
-                params_file = f"configs/{device_type}_params.json"
+                params_file = os.path.join(self.configs_dir, f"{device_type}_params.json")
                 if not os.path.exists(params_file):
                     click.echo(click.style(f"Params file not found for {device_type}", fg='red'))
                     return
@@ -1506,7 +1509,7 @@ class PersistentShell:
                 
             # If no params file provided, use device-specific one
             if not params_file and not params:
-                params_file = f"configs/{device_type}_params.json"
+                params_file = os.path.join(self.configs_dir, f"{device_type}_params.json")
                 if not os.path.exists(params_file):
                     click.echo(click.style(f"Params file not found for {device_type}", fg='red'))
                     return
