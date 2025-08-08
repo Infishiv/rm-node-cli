@@ -1,0 +1,39 @@
+{
+  "name": "Smart Lock",
+  "type": "esp.device.lock",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Smart Lock",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Lock State",
+      "type": "esp.param.lock-state",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": true,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Battery Level",
+      "type": "esp.param.battery-level",
+      "properties": ["read"],
+      "data_type": "int",
+      "default_value": 100,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.text"
+    }
+  ]
+}

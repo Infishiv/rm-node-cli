@@ -1,4 +1,4 @@
-Metadata-Version: 2.4
+Metadata-Version: 2.1
 Name: rm-node-cli
 Version: 1.0.0
 Summary: RM-Node CLI - Efficient MQTT Node Management for ESP RainMaker
@@ -24,19 +24,6 @@ Classifier: Topic :: System :: Networking
 Classifier: Topic :: Communications
 Requires-Python: >=3.7
 Description-Content-Type: text/markdown
-Requires-Dist: click>=8.0.0
-Requires-Dist: AWSIoTPythonSDK>=1.4.0
-Dynamic: author
-Dynamic: author-email
-Dynamic: classifier
-Dynamic: description
-Dynamic: description-content-type
-Dynamic: home-page
-Dynamic: keywords
-Dynamic: project-url
-Dynamic: requires-dist
-Dynamic: requires-python
-Dynamic: summary
 
 # RM-Node CLI
 

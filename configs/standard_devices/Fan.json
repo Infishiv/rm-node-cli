@@ -1,0 +1,48 @@
+{
+  "name": "Fan",
+  "type": "esp.device.fan",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Fan",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Speed",
+      "type": "esp.param.speed",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 3,
+      "bounds": {
+        "min": 0,
+        "max": 5,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Direction",
+      "type": "esp.param.direction",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 0,
+      "valid_strs": ["Forward", "Reverse"],
+      "ui_type": "esp.ui.dropdown"
+    }
+  ]
+}

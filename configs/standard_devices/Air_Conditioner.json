@@ -1,0 +1,61 @@
+{
+  "name": "Air Conditioner",
+  "type": "esp.device.air-conditioner",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Air Conditioner",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Mode",
+      "type": "esp.param.ac-mode",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Cool",
+      "valid_strs": ["Cool", "Heat", "Fan", "Dry", "Auto"],
+      "ui_type": "esp.ui.dropdown"
+    },
+    {
+      "name": "Temperature",
+      "type": "esp.param.temperature",
+      "properties": ["read", "write"],
+      "data_type": "float",
+      "default_value": 24.0,
+      "bounds": {
+        "min": 16,
+        "max": 30,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Fan Speed",
+      "type": "esp.param.speed",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 3,
+      "bounds": {
+        "min": 1,
+        "max": 5,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    }
+  ]
+}

@@ -52,7 +52,7 @@ class MQTTOperations:
         self.logger = logging.getLogger("mqtt_cli")
         self.connected = False
         self.last_ping = 0
-        self.ping_interval = 30  # Check connection every 30 seconds
+        self.ping_interval = 45  # Check connection every 45 seconds (longer than ESP 20s keep-alive)
         self._connect_lock = asyncio.Lock()
 
         # Disable all AWS IoT SDK logging
@@ -75,13 +75,16 @@ class MQTTOperations:
 
         self.mqtt_client.configureEndpoint(self.broker, PORT)
         self.mqtt_client.configureCredentials(self.root_path, self.key_path, self.cert_path)
-        self.mqtt_client.configureConnectDisconnectTimeout(CONNECT_DISCONNECT_TIMEOUT)
-        self.mqtt_client.configureMQTTOperationTimeout(OPERATION_TIMEOUT)
-        self.mqtt_client.configureAutoReconnectBackoffTime(1, 32, 20)
-        self.mqtt_client.configureOfflinePublishQueueing(-1)  # Infinite publish queueing
-        self.mqtt_client.configureDrainingFrequency(2)  # Draining: 2 Hz
-        self.mqtt_client.configureConnectDisconnectTimeout(10)  # 10 sec
-        self.mqtt_client.configureMQTTOperationTimeout(30)  # 30 sec instead of 5 sec
+        
+        # Optimized for ESP RainMaker and scalability
+        self.mqtt_client.configureConnectDisconnectTimeout(8)  # Faster connection
+        self.mqtt_client.configureMQTTOperationTimeout(6)     # Faster operations
+        self.mqtt_client.configureAutoReconnectBackoffTime(1, 16, 10)  # Shorter backoff
+        self.mqtt_client.configureOfflinePublishQueueing(100)  # Limited queue to prevent memory issues
+        self.mqtt_client.configureDrainingFrequency(5)        # Faster draining: 5 Hz
+        
+        # Set keep-alive to match ESP RainMaker
+        self.mqtt_client.configureMQTTOperationTimeout(6)  # 6 sec for fast response
 
     async def _check_connection_async(self):
         """Check connection status asynchronously."""

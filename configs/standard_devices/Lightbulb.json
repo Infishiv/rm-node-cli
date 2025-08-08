@@ -1,0 +1,78 @@
+{
+  "name": "Lightbulb",
+  "type": "esp.device.lightbulb",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Lightbulb",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Brightness",
+      "type": "esp.param.brightness",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 25,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Hue",
+      "type": "esp.param.hue",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 180,
+      "bounds": {
+        "min": 0,
+        "max": 360,
+        "step": 1
+      },
+      "ui_type": "esp.ui.hue_slider"
+    },
+    {
+      "name": "Saturation",
+      "type": "esp.param.saturation",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 100,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "CCT",
+      "type": "esp.param.cct",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 2700,
+      "bounds": {
+        "min": 2700,
+        "max": 6500,
+        "step": 100
+      },
+      "ui_type": "esp.ui.slider"
+    }
+  ]
+}

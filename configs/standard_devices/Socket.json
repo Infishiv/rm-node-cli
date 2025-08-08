@@ -1,0 +1,52 @@
+{
+  "name": "Socket",
+  "type": "esp.device.socket",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Socket",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Current",
+      "type": "esp.param.current",
+      "properties": ["read", "time_series"],
+      "data_type": "float",
+      "default_value": 0.0,
+      "bounds": {
+        "min": 0,
+        "max": 16,
+        "step": 0.1
+      },
+      "ui_type": "esp.ui.text"
+    },
+    {
+      "name": "Voltage",
+      "type": "esp.param.voltage",
+      "properties": ["read", "time_series"],
+      "data_type": "float",
+      "default_value": 230.0,
+      "bounds": {
+        "min": 100,
+        "max": 300,
+        "step": 0.1
+      },
+      "ui_type": "esp.ui.text"
+    }
+  ]
+}

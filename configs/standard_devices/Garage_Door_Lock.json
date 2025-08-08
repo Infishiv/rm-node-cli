@@ -1,0 +1,39 @@
+{
+  "name": "Garage Door Lock",
+  "type": "esp.device.garage-door-lock",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Garage Door Lock",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Lock State",
+      "type": "esp.param.lock-state",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": true,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Garage Position",
+      "type": "esp.param.garage-position",
+      "properties": ["read"],
+      "data_type": "int",
+      "default_value": 0,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.text"
+    }
+  ]
+}

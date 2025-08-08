@@ -1,0 +1,289 @@
+{
+  "attributes": [],
+  "info": {
+      "fw_version": "1.0.0",
+      "model": "",
+      "name": "",
+      "platform": "ESP32",
+      "project_name": "exmape3",
+      "type": ""
+  },
+  "devices": [
+      {
+          "name": "Light Bulb",
+          "type": "esp.device.lightbulb",
+          "params": [
+              {
+                  "name": "Brightness",
+                  "default_value": 0,
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "type": "esp.param.brightness",
+                  "ui_type": "esp.ui.slider",
+                  "bounds": {
+                      "max": 100,
+                      "min": 0,
+                      "step": 1
+                  },
+                  "data_type": "int"
+              },
+              {
+                  "name": "Color Hue",
+                  "default_value": 0,
+                  "type": "esp.param.hue",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "bounds": {
+                      "max": 360,
+                      "min": 0,
+                      "step": 1
+                  },
+                  "data_type": "int",
+                  "ui_type": "esp.ui.hue-slider"
+              },
+              {
+                  "name": "Light Intensity",
+                  "default_value": 0,
+                  "type": "esp.param.intensity",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "bounds": {
+                      "max": 100,
+                      "min": 0,
+                      "step": 1
+                  },
+                  "data_type": "int",
+                  "ui_type": "esp.ui.slider"
+              },
+              {
+                  "name": "Color Temperature",
+                  "value": 0,
+                  "type": "esp.param.cct",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "bounds": {
+                      "max": 6500,
+                      "min": 2000,
+                      "step": 100
+                  },
+                  "data_type": "int",
+                  "ui_type": "esp.ui.slider"
+              },
+              {
+                  "name": "Saturation",
+                  "default_value": 0,
+                  "type": "esp.param.saturation",
+                  "bounds": {
+                      "max": 100,
+                      "min": 0,
+                      "step": 1
+                  },
+                  "data_type": "int",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "ui_type": "esp.ui.slider"
+              },
+              {
+                  "name": "Fan Speed",
+                  "default_value": 0,
+                  "type": "esp.param.speed",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "bounds": {
+                      "max": 5,
+                      "min": 0,
+                      "step": 1
+                  },
+                  "data_type": "int",
+                  "ui_type": "esp.ui.slider"
+              },
+              {
+                  "name": "Name",
+                  "default_value": "Light Bulb",
+                  "type": "esp.param.name",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "data_type": "string",
+                  "bounds": {
+                      "min": 1,
+                      "max": 32,
+                      "step": 1
+                  }
+              },
+              {
+                  "name": "Power",
+                  "default_value": true,
+                  "type": "esp.param.power",
+                  "properties": [
+                      "read",
+                      "write"
+                  ],
+                  "ui_type": "esp.ui.toggle",
+                  "data_type": "bool",
+                  "primary": true
+              }
+          ],
+          "primary": "Power"
+      }
+  ],
+  "services": [
+        {
+            "name": "Time",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "TZ",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.tz"
+                },
+                {
+                    "data_type": "string",
+                    "name": "TZ-POSIX",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.tz_posix"
+                }
+            ],
+            "type": "esp.service.time"
+        },
+        {
+            "name": "Schedule",
+            "params": [
+                {
+                    "bounds": {
+                        "max": 10
+                    },
+                    "data_type": "array",
+                    "name": "Schedules",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.schedules"
+                }
+            ],
+            "type": "esp.service.schedule"
+        },
+        {
+            "attributes": [
+                {
+                    "name": "deactivation_support",
+                    "value": "no"
+                }
+            ],
+            "name": "Scenes",
+            "params": [
+                {
+                    "bounds": {
+                        "max": 10
+                    },
+                    "data_type": "array",
+                    "name": "Scenes",
+                    "properties": [
+                        "read",
+                        "write"
+                    ],
+                    "type": "esp.param.scenes"
+                }
+            ],
+            "type": "esp.service.scenes"
+        },
+        {
+            "name": "Local Control",
+            "params": [
+                {
+                    "data_type": "string",
+                    "name": "POP",
+                    "properties": [
+                        "read"
+                    ],
+                    "type": "esp.param.local_control_pop"
+                },
+                {
+                    "data_type": "int",
+                    "name": "Type",
+                    "properties": [
+                        "read"
+                    ],
+                    "type": "esp.param.local_control_type"
+                }
+            ],
+            "type": "esp.service.local_control"
+        }
+    ],
+    "features": [
+      {
+          "name": "ota",
+          "type": "esp.service.ota",
+          "args": [
+              "name"
+          ],
+          "default_value": {
+              "name": "OTA"
+          }
+      },
+      {
+          "name": "time",
+          "type": "esp.service.time",
+          "args": [
+              "tz",
+              "tz-posix"
+          ],
+          "default_value": {
+              "tz": "Asia/Bangkok",
+              "tz-posix": "CST-8"
+          }
+      },
+      {
+          "name": "schedule",
+          "type": "esp.service.schedule",
+          "args": [
+              "name",
+              "maxSchedules"
+          ],
+          "default_value": {
+              "name": "Schedule",
+              "maxSchedules": 10
+          }
+      },
+      {
+          "name": "scenes",
+          "type": "esp.service.scenes",
+          "args": [
+              "name",
+              "maxScenes",
+              "deactivation_support"
+          ],
+          "default_value": {
+              "name": "Scenes",
+              "maxScenes": 10,
+              "deactivation_support": true
+          }
+      },
+      {
+          "name": "system",
+          "type": "esp.service.system",
+          "args": [],
+          "default_value": {}
+      }
+  ]
+}

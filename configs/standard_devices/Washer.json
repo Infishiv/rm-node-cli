@@ -1,0 +1,66 @@
+{
+  "name": "Washer",
+  "type": "esp.device.washer",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Washer",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Wash Mode",
+      "type": "esp.param.wash-mode",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Normal",
+      "valid_strs": ["Normal", "Delicate", "Heavy Duty", "Quick Wash", "Eco"],
+      "ui_type": "esp.ui.dropdown"
+    },
+    {
+      "name": "Temperature",
+      "type": "esp.param.temperature",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Warm",
+      "valid_strs": ["Cold", "Warm", "Hot"],
+      "ui_type": "esp.ui.dropdown"
+    },
+    {
+      "name": "Spin Speed",
+      "type": "esp.param.speed",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 800,
+      "bounds": {
+        "min": 400,
+        "max": 1400,
+        "step": 200
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Cycle Status",
+      "type": "esp.param.cycle-status",
+      "properties": ["read"],
+      "data_type": "string",
+      "default_value": "Idle",
+      "valid_strs": ["Idle", "Running", "Paused", "Complete", "Error"],
+      "ui_type": "esp.ui.text"
+    }
+  ]
+}

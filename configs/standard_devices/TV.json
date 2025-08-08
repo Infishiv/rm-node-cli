@@ -1,0 +1,74 @@
+{
+  "name": "TV",
+  "type": "esp.device.tv",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "TV",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Volume",
+      "type": "esp.param.volume",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 30,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Channel",
+      "type": "esp.param.channel",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 1,
+      "bounds": {
+        "min": 1,
+        "max": 999,
+        "step": 1
+      },
+      "ui_type": "esp.ui.text"
+    },
+    {
+      "name": "Input Source",
+      "type": "esp.param.input-source",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "HDMI1",
+      "valid_strs": ["HDMI1", "HDMI2", "HDMI3", "USB", "TV", "AV"],
+      "ui_type": "esp.ui.dropdown"
+    },
+    {
+      "name": "Brightness",
+      "type": "esp.param.brightness",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 50,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    }
+  ]
+}

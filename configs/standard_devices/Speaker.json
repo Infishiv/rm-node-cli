@@ -1,0 +1,47 @@
+{
+  "name": "Speaker",
+  "type": "esp.device.speaker",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Speaker",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Volume",
+      "type": "esp.param.volume",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 50,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Mute",
+      "type": "esp.param.mute",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    }
+  ]
+}

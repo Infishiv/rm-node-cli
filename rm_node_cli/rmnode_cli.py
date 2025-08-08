@@ -27,6 +27,8 @@ from .utils.debug_logger import debug_log, debug_step
 from .utils.exceptions import MQTTConnectionError
 from .utils.cert_finder import find_node_cert_key_pairs, find_by_mac_address, find_certificates_in_directory
 from .utils.logger import setup_logging, get_logger, log_crash, log_monitoring_issue
+from .utils.connection_pool import ConnectionPool, PoolConfig
+from .utils.optimized_monitoring import AdaptiveMonitor, SelectiveSubscriptionManager, MonitoringLevel
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -35,18 +37,36 @@ logger = logging.getLogger(__name__)
 shutdown_event = asyncio.Event()
 
 class RMNodeManager:
-    """Manages all node connections and background operations."""
+    """Manages all node connections and background operations with scalable architecture."""
     
-    def __init__(self, config_dir: str):
+    def __init__(self, config_dir: str, max_nodes: int = 1000):
         self.config_dir = config_dir
         self.config_manager = ConfigManager(config_dir)
-        self.connections: Dict[str, MQTTOperations] = {}
         self.broker_url: Optional[str] = None
         self.cert_paths: List[str] = []  # Support multiple paths
         self.running = True
         
+        # Optimized for ESP RainMaker (20s keep-alive) 
+        pool_config = PoolConfig(
+            max_concurrent_connections=min(max_nodes, 100),  # AWS IoT limits
+            connection_rate_limit=30,  # Faster startup
+            batch_size=15,  # Smaller batches for better progress feedback
+            circuit_breaker_threshold=3,  # Faster failure detection  
+            circuit_breaker_timeout=120,  # 2 minutes (faster recovery)
+            connection_timeout=8,  # Optimized for ESP RainMaker
+            operation_timeout=6,   # Optimized for ESP RainMaker
+            health_check_interval=25,  # Aligned with ESP 20s keep-alive
+            max_retries=2,  # Fewer retries for faster startup
+            esp_keepalive_time=20  # ESP RainMaker keep-alive period
+        )
+        
+        self.connection_pool = ConnectionPool(pool_config)
+        self.adaptive_monitor = AdaptiveMonitor(max_concurrent_monitors=min(max_nodes // 10, 50))
+        self.subscription_manager = SelectiveSubscriptionManager(max_subscriptions=min(max_nodes * 3, 300))
+        
         # Background task for maintaining connections
         self.connection_task = None
+        self.monitoring_task = None
         self.is_running = False
         
         # OTA job storage - two files system
@@ -134,103 +154,118 @@ class RMNodeManager:
         
     @debug_step("Connecting to all nodes")
     async def connect_all_nodes(self) -> Tuple[int, int]:
-        """Connect to all discovered nodes concurrently."""
+        """Connect to all discovered nodes using scalable connection pool."""
         try:
             nodes = self.discover_nodes()
             
-            # Create connection tasks for all nodes
-            connection_tasks = []
-            for node_id, cert_path, key_path in nodes:
-                task = self._connect_node(node_id, cert_path, key_path)
-                connection_tasks.append(task)
-                
-            # Wait for all connections to complete
-            results = await asyncio.gather(*connection_tasks, return_exceptions=True)
+            if not nodes:
+                click.echo(click.style("✗ No nodes discovered", fg='red'))
+                return 0, 0
             
-            # Count successful connections
-            connected_count = sum(1 for result in results if result)
+            # Set broker in connection pool
+            self.connection_pool.set_broker(self.broker_url)
+            
+            # Start connection pool
+            await self.connection_pool.start()
+            
+            # Connect nodes in batches with rate limiting
+            connected_count, total_count = await self.connection_pool.connect_nodes_batch(
+                nodes, MQTTOperations
+            )
             
             if connected_count == 0:
                 click.echo(click.style("✗ No nodes connected successfully", fg='red'))
-                return 0, len(nodes)
+                return 0, total_count
                 
-            click.echo(click.style(f"✓ Connected to {connected_count}/{len(nodes)} nodes", fg='green'))
-            return connected_count, len(nodes)
+            # Store connections in config for persistent shell access
+            connected_nodes = self.connection_pool.get_connected_nodes()
+            for node_id in connected_nodes:
+                # Find cert/key paths for this node
+                for n_id, cert_path, key_path in nodes:
+                    if n_id == node_id:
+                        self.config_manager.add_node(node_id, cert_path, key_path)
+                        break
+                        
+            click.echo(click.style(f"✓ Connected to {connected_count}/{total_count} nodes", fg='green'))
+            
+            # Show timing information
+            click.echo(click.style("🔄 Finalizing setup...", fg='yellow'))
+            
+            # Start optimized monitoring
+            await self._start_optimized_monitoring(connected_nodes)
+            
+            return connected_count, total_count
             
         except Exception as e:
             logger.debug(f"Error in connect_all_nodes: {str(e)}")
             click.echo(click.style(f"✗ Error: {str(e)}", fg='red'))
             return 0, 0
 
-    async def _connect_node(self, node_id: str, cert_path: str, key_path: str) -> bool:
-        """Connect to a single node asynchronously with retry logic."""
-        max_retries = 3
-        retry_delay = 2  # seconds
-        
-        # Get logger for connection logging
+    async def _start_optimized_monitoring(self, connected_nodes: List[str]):
+        """Start optimized monitoring for connected nodes."""
         try:
-            logger_instance = get_logger()
-            mqtt_logger = logger_instance.mqtt_logger
-        except:
-            mqtt_logger = logging.getLogger("rm_node_cli.mqtt")
+            click.echo(click.style("🔄 Setting up adaptive monitoring...", fg='yellow'))
+            
+            # Start adaptive monitor (this should be fast)
+            await self.adaptive_monitor.start()
+            
+            # Add connected nodes to monitoring with appropriate levels
+            # Prioritize based on ESP RainMaker keep-alive requirements
+            for i, node_id in enumerate(connected_nodes):
+                if i < 20:  # First 20 nodes get high priority (more critical)
+                    level = MonitoringLevel.HIGH
+                elif i < 40:  # Next 20 nodes get normal priority  
+                    level = MonitoringLevel.NORMAL
+                else:  # Rest get low priority to save resources
+                    level = MonitoringLevel.LOW
+                    
+                self.adaptive_monitor.add_node(node_id, level)
+                
+            click.echo(click.style(f"✓ Started optimized monitoring for {len(connected_nodes)} nodes", fg='blue'))
+            click.echo(click.style("💡 Monitoring adapts automatically based on node health", fg='cyan'))
+            
+        except Exception as e:
+            logger.error(f"Error starting optimized monitoring: {str(e)}")
+            click.echo(click.style(f"⚠ Monitoring setup had issues: {str(e)}", fg='yellow'))
+            
+    def get_connection(self, node_id: str):
+        """Get connection for a specific node."""
+        return self.connection_pool.get_connection(node_id)
         
-        for attempt in range(max_retries):
-            try:
-                mqtt_logger.debug(f"Connecting to node: {node_id} (attempt {attempt + 1}/{max_retries})")
-                
-                # Create MQTT client for this node
-                mqtt_client = MQTTOperations(
-                    broker=self.broker_url,
-                    node_id=node_id,
-                    cert_path=cert_path,
-                    key_path=key_path
-                )
-                
-                # Connect asynchronously
-                if await mqtt_client.connect_async():
-                    self.connections[node_id] = mqtt_client
-                    # Store node config
-                    self.config_manager.add_node(node_id, cert_path, key_path)
-                    click.echo(click.style(f"✓ Connected to {node_id}", fg='green'))
-                    return True
-                else:
-                    if attempt < max_retries - 1:
-                        click.echo(click.style(f"✗ Failed to connect to {node_id} (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...", fg='yellow'))
-                        await asyncio.sleep(retry_delay)
-                    else:
-                        click.echo(click.style(f"✗ Failed to connect to {node_id} after {max_retries} attempts", fg='red'))
-                        return False
-                        
-            except Exception as e:
-                mqtt_logger.debug(f"Error connecting to {node_id} (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                
-                # Log connection issue
-                try:
-                    logger_instance.log_connection_issue(node_id, str(e), attempt + 1)
-                except:
-                    pass
-                
-                if attempt < max_retries - 1:
-                    click.echo(click.style(f"✗ Error connecting to {node_id} (attempt {attempt + 1}/{max_retries}): {str(e)}", fg='yellow'))
-                    click.echo(click.style(f"Retrying in {retry_delay}s...", fg='yellow'))
-                    await asyncio.sleep(retry_delay)
-                else:
-                    click.echo(click.style(f"✗ Failed to connect to {node_id} after {max_retries} attempts: {str(e)}", fg='red'))
-                    return False
+    def get_connected_nodes(self) -> List[str]:
+        """Get list of all connected node IDs."""
+        return self.connection_pool.get_connected_nodes()
         
-        return False
+    @property
+    def connections(self) -> Dict[str, any]:
+        """Backward compatibility property for accessing connections."""
+        # Return a dict-like object that provides access to connections
+        connected_nodes = self.connection_pool.get_connected_nodes()
+        return {node_id: self.connection_pool.get_connection(node_id) 
+                for node_id in connected_nodes}
 
     async def start_background_connections(self):
-        """Start background task to maintain connections to all nodes."""
+        """Start background task to maintain connections using connection pool."""
         if self.connection_task is not None:
             return
             
         self.is_running = True
-        self.connection_task = asyncio.create_task(self._maintain_connections())
+        # The connection pool handles its own background maintenance
+        # We just need to start monitoring tasks
+        self.monitoring_task = asyncio.create_task(self._maintain_monitoring())
         
     async def stop_background_connections(self):
-        """Stop the background connection maintenance task."""
+        """Stop the background connection and monitoring tasks."""
         self.is_running = False
+        
+        # Stop connection pool
+        if self.connection_pool:
+            await self.connection_pool.stop()
+            
+        # Stop monitoring
+        if self.adaptive_monitor:
+            await self.adaptive_monitor.stop()
+            
         if self.connection_task:
             self.connection_task.cancel()
             try:
@@ -238,33 +273,48 @@ class RMNodeManager:
             except asyncio.CancelledError:
                 pass
             self.connection_task = None
+            
+        if self.monitoring_task:
+            self.monitoring_task.cancel()
+            try:
+                await self.monitoring_task
+            except asyncio.CancelledError:
+                pass
+            self.monitoring_task = None
 
-    async def _maintain_connections(self):
-        """Background task to maintain connections to all nodes."""
+    async def _maintain_monitoring(self):
+        """Background task to maintain monitoring and adjust levels."""
         while self.is_running and not shutdown_event.is_set():
             try:
-                nodes = self.discover_nodes()
+                # Get monitoring summary
+                summary = self.adaptive_monitor.get_monitoring_summary()
                 
-                # Check and reconnect disconnected nodes
-                for node_id, cert_path, key_path in nodes:
-                    if node_id not in self.connections or not self.connections[node_id].is_connected():
-                        logger.debug(f"Attempting to reconnect to {node_id}")
-                        await self._connect_node(node_id, cert_path, key_path)
+                # Adjust monitoring based on performance
+                if summary["nodes_with_errors"] > 10:
+                    # Too many errors, increase monitoring for all
+                    await self.adaptive_monitor.bulk_adjust_monitoring({"max_errors": 1})
+                    
+                # Log monitoring status periodically
+                if summary["total_nodes"] > 0:
+                    logger.debug(f"Monitoring {summary['total_nodes']} nodes, "
+                               f"{summary['active_monitors']} active monitors, "
+                               f"{summary['nodes_with_errors']} with errors")
                 
                 # Wait before next check
                 try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=30)
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=60)
                 except asyncio.TimeoutError:
                     continue
                 
             except Exception as e:
-                logger.error(f"Error in connection maintenance: {str(e)}")
-                await asyncio.sleep(5)  # Short delay on error
+                logger.error(f"Error in monitoring maintenance: {str(e)}")
+                await asyncio.sleep(10)  # Short delay on error
 
     @debug_step("Starting background listeners")
     async def start_background_listeners(self):
-        """Start background listeners for all important topics."""
-        if not self.connections:
+        """Start optimized background listeners using selective subscription."""
+        connected_nodes = self.connection_pool.get_connected_nodes()
+        if not connected_nodes:
             return
             
         # Topics to subscribe to for all nodes
@@ -325,32 +375,49 @@ class RMNodeManager:
                     logger.debug(f"Error handling message from {node_id}: {str(e)}")
             return handler
         
-        # Subscribe to all topics for all connected nodes
+        # Subscribe using selective subscription manager for better resource management
+        click.echo(click.style("🔄 Setting up topic subscriptions...", fg='yellow'))
+        
         success_count = 0
-        for node_id, mqtt_client in self.connections.items():
+        total_subscriptions = 0
+        
+        # Prioritize high-priority nodes for subscriptions
+        for node_id in connected_nodes[:50]:  # Limit to first 50 nodes to avoid overload
+            mqtt_client = self.connection_pool.get_connection(node_id)
+            if not mqtt_client:
+                continue
+                
             node_success = True
             for topic_suffix in topics:
                 full_topic = f"node/{node_id}/{topic_suffix}"
                 handler = create_message_handler(node_id, topic_suffix)
                 
                 try:
-                    if await mqtt_client.subscribe_async(full_topic, qos=1, callback=handler):
+                    # Use QoS 0 for better performance and ESP RainMaker compatibility
+                    if await mqtt_client.subscribe_async(full_topic, qos=0, callback=handler):
                         logger.debug(f"Subscribed to {full_topic}")
+                        total_subscriptions += 1
                     else:
                         logger.debug(f"Failed to subscribe to {full_topic}")
                         node_success = False
+                        break  # Skip remaining topics for this node if one fails
                 except Exception as e:
                     logger.debug(f"Error subscribing to {full_topic}: {str(e)}")
                     node_success = False
+                    break  # Skip remaining topics for this node if one fails
             
             if node_success:
                 success_count += 1
+                
+            # Add small delay to prevent overwhelming broker
+            if success_count % 10 == 0:  # Every 10 nodes
+                await asyncio.sleep(0.1)
                     
         # Show a single summary message
-        if success_count == len(self.connections):
-            click.echo(click.style(f"✓ Started monitoring {len(topics)} topics on {success_count} connected nodes", fg='green'))
+        if success_count == min(len(connected_nodes), 50):
+            click.echo(click.style(f"✓ Monitoring {total_subscriptions} topic subscriptions on {success_count} nodes", fg='green'))
         else:
-            click.echo(click.style(f"⚠ Started monitoring with partial success: {success_count}/{len(self.connections)} nodes", fg='yellow'))
+            click.echo(click.style(f"⚠ Started monitoring with partial success: {success_count}/{min(len(connected_nodes), 50)} nodes", fg='yellow'))
 
     def publish_to_all(self, topic_suffix: str, payload: str, qos: int = 1) -> int:
         """Publish message to all connected nodes."""
@@ -595,21 +662,20 @@ class RMNodeManager:
             return False
 
     async def cleanup(self):
-        """Clean up by stopping background tasks and disconnecting from all nodes."""
-        logger.debug("Starting cleanup...")
+        """Fast cleanup - stop background tasks but skip full disconnection for speed."""
+        logger.debug("Starting fast cleanup...")
         self.running = False
         
         # Set shutdown event to stop background tasks
         shutdown_event.set()
         
-        # Disconnect from all nodes
-        success_count, total_count = await self.disconnect_all_nodes()
-        logger.debug(f"Disconnected from {success_count}/{total_count} nodes during cleanup")
-        
-        # Stop background connections
+        # Stop background tasks without waiting for full disconnection
+        # This is much faster and suitable for ESP RainMaker's 20s keep-alive
         await self.stop_background_connections()
         
-        logger.debug("Cleanup completed")
+        # For ESP RainMaker, the connections will timeout naturally (20s keep-alive)
+        # No need to explicitly disconnect each node for faster exit
+        logger.debug("Fast cleanup completed")
 
 # Global manager instance
 manager: Optional[RMNodeManager] = None
@@ -621,19 +687,19 @@ def handle_exception(loop, context):
     logger.error(f"Caught exception: {msg}")
 
 def cleanup_and_exit():
-    """Clean up and exit the program."""
+    """Fast cleanup and exit the program."""
     if manager and loop:
         try:
             if loop.is_running():
-                # Schedule cleanup of background tasks
+                # Schedule fast cleanup
                 future = asyncio.run_coroutine_threadsafe(manager.cleanup(), loop)
-                # Wait briefly for cleanup
-                future.result(timeout=2)
+                # Very short timeout for fast exit
+                future.result(timeout=0.5)
             else:
                 # If loop is not running, run cleanup directly
                 loop.run_until_complete(manager.cleanup())
         except Exception as e:
-            logger.error(f"Error during cleanup: {str(e)}")
+            logger.debug(f"Fast exit, ignoring cleanup error: {str(e)}")
     sys.exit(0)
 
 def signal_handler(signum, frame):
@@ -646,11 +712,13 @@ def signal_handler(signum, frame):
               help='Path to certificates directory containing node certificates (can specify multiple times)')
 @click.option('--broker-id', default='mqtts://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com/',
               help='MQTT broker URL (default: mqtts://a1p72mufdu6064-ats.iot.us-east-1.amazonaws.com/)')
-@click.option('--config-dir', default='.rm-node',
-              help='Configuration directory (default: .rm-node)')
+@click.option('--config-dir', default=str(Path.home() / '.rm-node'),
+              help='Configuration directory (default: ~/.rm-node)')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
+@click.option('--max-nodes', default=1000, type=int,
+              help='Maximum number of nodes to handle (default: 1000)')
 @debug_log
-def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: bool):
+def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: bool, max_nodes: int):
     """
     RM-Node CLI - Efficient MQTT Node Management
     
@@ -664,17 +732,25 @@ def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: boo
     global manager, loop
     
     try:
-        # Create configuration directory
-        config_path = Path(config_dir).resolve()
-        config_path.mkdir(exist_ok=True)
-        
+        # Create configuration directory with proper error handling
+        try:
+            config_path = Path(config_dir).resolve()
+            config_path.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            click.echo(click.style(f"✗ Error: Permission denied creating config directory at {config_path}", fg='red'))
+            click.echo("Please specify a different config directory using --config-dir or ensure you have write permissions")
+            sys.exit(1)
+        except Exception as e:
+            click.echo(click.style(f"✗ Error creating config directory: {str(e)}", fg='red'))
+            sys.exit(1)
+            
         # Setup professional logging system
         log_level = "DEBUG" if debug else "INFO"
         logger = setup_logging(str(config_path), log_level)
         app_logger = logger.app_logger
         
-        # Initialize manager
-        manager = RMNodeManager(str(config_path))
+        # Initialize manager with max_nodes parameter
+        manager = RMNodeManager(str(config_path), max_nodes=max_nodes)
         manager.broker_url = broker_id
         manager.cert_paths = list(cert_path)  # Store multiple paths
         

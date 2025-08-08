@@ -1,0 +1,83 @@
+{
+  "attributes": [
+    {
+      "name": "asdas",
+      "value": "asdas"
+    },
+    {
+      "name": "asdas",
+      "value": "asda"
+    }
+  ],
+  "info": {
+    "platform": "dsd",
+    "model": "dsd",
+    "fw_version": "333",
+    "project_name": "asdasd",
+    "type": "333"
+  },
+  "devices": [
+    {
+      "name": "Switch",
+      "type": "esp.device.switch",
+      "params": [
+        {
+          "name": "Name",
+          "default_value": "Switch",
+          "type": "esp.param.name",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "data_type": "string",
+          "bounds": {
+            "min": 1,
+            "max": 32,
+            "step": 1
+          }
+        },
+        {
+          "name": "Power",
+          "default_value": true,
+          "type": "esp.param.power",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "ui_type": "esp.ui.toggle",
+          "data_type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "Device",
+      "type": "esp.device.custom",
+      "params": [
+        {
+          "name": "Power",
+          "default_value": true,
+          "type": "esp.param.power",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "ui_type": "esp.ui.toggle",
+          "data_type": "bool"
+        }
+      ]
+    }
+  ],
+  "services": [],
+  "features": [
+    {
+      "name": "ota",
+      "type": "esp.service.ota",
+      "args": [
+        "name"
+      ],
+      "default_value": {
+        "name": "OTA"
+      }
+    }
+  ]
+}

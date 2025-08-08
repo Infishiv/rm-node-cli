@@ -1,0 +1,48 @@
+{
+  "name": "Zigbee Gateway",
+  "type": "esp.device.zigbee_gateway",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Zigbee Gateway",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Network Status",
+      "type": "esp.param.network-status",
+      "properties": ["read"],
+      "data_type": "string",
+      "default_value": "Connected",
+      "valid_strs": ["Connected", "Disconnected", "Pairing"],
+      "ui_type": "esp.ui.text"
+    },
+    {
+      "name": "Connected Devices",
+      "type": "esp.param.connected-devices",
+      "properties": ["read"],
+      "data_type": "int",
+      "default_value": 0,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.text"
+    },
+    {
+      "name": "Pairing Mode",
+      "type": "esp.param.pairing-mode",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+    "config_version": "2025-01-20",
+    "devices": [],
+    "info": {
+        "fw_version": "1.0",
+        "model": "ESP-Multi-Device",
+        "name": "ESP RainMaker Device",
+        "platform": "esp32",
+        "project_name": "PROJECT_NAME_PLACEHOLDER",
+        "type": "multi-device"
+    },
+    "node_id": "NODE_ID_PLACEHOLDER",
+    "services": [],
+    "features": []
+}

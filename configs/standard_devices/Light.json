@@ -1,0 +1,48 @@
+{
+  "name": "Light",
+  "type": "esp.device.light",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Light",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Power",
+      "type": "esp.param.power",
+      "properties": ["read", "write"],
+      "data_type": "bool",
+      "default_value": false,
+      "ui_type": "esp.ui.toggle"
+    },
+    {
+      "name": "Brightness",
+      "type": "esp.param.brightness",
+      "properties": ["read", "write"],
+      "data_type": "int",
+      "default_value": 50,
+      "bounds": {
+        "min": 0,
+        "max": 100,
+        "step": 1
+      },
+      "ui_type": "esp.ui.slider"
+    },
+    {
+      "name": "Light Mode",
+      "type": "esp.param.light-mode",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Solid",
+      "valid_strs": ["Solid", "Flash", "Breathe", "Strobe"],
+      "ui_type": "esp.ui.dropdown"
+    }
+  ]
+}

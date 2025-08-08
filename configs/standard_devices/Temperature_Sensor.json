@@ -1,0 +1,31 @@
+{
+  "name": "Temperature Sensor",
+  "type": "esp.device.temperature-sensor",
+  "params": [
+    {
+      "name": "Name",
+      "type": "esp.param.name",
+      "properties": ["read", "write"],
+      "data_type": "string",
+      "default_value": "Temperature Sensor",
+      "bounds": {
+        "min": 1,
+        "max": 32,
+        "step": 1
+      }
+    },
+    {
+      "name": "Temperature",
+      "type": "esp.param.temperature",
+      "properties": ["read", "time_series"],
+      "data_type": "float",
+      "default_value": 25.0,
+      "bounds": {
+        "min": -40,
+        "max": 125,
+        "step": 0.1
+      },
+      "ui_type": "esp.ui.text"
+    }
+  ]
+}

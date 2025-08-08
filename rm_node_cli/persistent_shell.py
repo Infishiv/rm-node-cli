@@ -93,6 +93,21 @@ class PersistentShell:
             'simple_tsdata': os.path.join(self.configs_dir, 'simple_tsdata.json')  # Default simple time series data
         }
         
+        # Path to standard devices directory
+        self.standard_devices_dir = os.path.join(self.configs_dir, 'standard_devices')
+        
+        # Path to custom state file (follows heater_config.json format)
+        self.custom_state_file = os.path.join(self.configs_dir, 'custom_state.json')
+        
+        # Path to temporary device registry (cleaned on startup/shutdown)
+        self.temp_device_registry = self.config_dir / 'temp_device_registry.json'
+        
+        # Directory for temporary node JSON files
+        self.temp_nodes_dir = self.config_dir / 'temp_nodes'
+        
+        # Clean up temporary files on startup
+        self._cleanup_temp_files()
+        
         # Organize commands by actual module sections (only publishing commands)
         self.command_sections = {
             'node': {
@@ -145,7 +160,7 @@ class PersistentShell:
                 ]
             },
             'utility': {
-                'commands': ['status', 'help', 'clear', 'disconnect', 'session-history', 'history', 'exit'],
+                'commands': ['status', 'help', 'clear', 'disconnect', 'session-history', 'history', 'device-registry', 'temp-files', 'publish-state', 'exit'],
                 'description': 'Shell utility commands',
                 'module': 'built-in',
                 'examples': [
@@ -156,6 +171,9 @@ class PersistentShell:
                     'disconnect --node-id node123',
                     'session-history',
                     'history',
+                    'device-registry',
+                    'temp-files',
+                    'publish-state',
                     'exit'
                 ]
             }
@@ -194,6 +212,9 @@ class PersistentShell:
             'disconnect': self._handle_disconnect,
             'session-history': self._handle_session_history,
             'history': self._handle_history,
+            'device-registry': self._handle_device_registry,
+            'temp-files': self._handle_temp_files,
+            'publish-state': self._handle_publish_state,
             'logs': self._handle_logs,
             'exit': self._handle_exit,
             'quit': self._handle_exit,
@@ -1043,12 +1064,192 @@ class PersistentShell:
                 
         return None
 
+    def _get_available_device_types(self) -> List[str]:
+        """Get all available device types from standard_devices directory."""
+        device_types = []
+        
+        if os.path.exists(self.standard_devices_dir) and os.path.isdir(self.standard_devices_dir):
+            try:
+                for filename in os.listdir(self.standard_devices_dir):
+                    if filename.endswith('.json'):
+                        # Remove .json extension and convert to lowercase
+                        device_type = os.path.splitext(filename)[0].lower()
+                        # Replace underscores with hyphens for consistency
+                        device_type = device_type.replace('_', '-')
+                        device_types.append(device_type)
+                        
+                device_types = list(set(device_types))  # Remove duplicates
+                device_types.sort()
+                logger.debug(f"Found {len(device_types)} device types from standard_devices/: {device_types}")
+                
+            except Exception as e:
+                logger.debug(f"Error reading standard_devices directory: {str(e)}")
+                # Fallback to all known device types from standard_devices
+                device_types = [
+                    'air-conditioner', 'blinds', 'blinds-external', 'fan', 
+                    'garage-door', 'garage-door-lock', 'light', 'lightbulb', 
+                    'lock', 'outlet', 'plug', 'socket', 'speaker', 'switch', 
+                    'temperature-sensor', 'thermostat', 'tv', 'washer', 'zigbee-gateway'
+                ]
+        else:
+            # Fallback to all known device types if directory doesn't exist
+            logger.debug("standard_devices directory not found, using fallback types")
+            device_types = [
+                'air-conditioner', 'blinds', 'blinds-external', 'fan', 
+                'garage-door', 'garage-door-lock', 'light', 'lightbulb', 
+                'lock', 'outlet', 'plug', 'socket', 'speaker', 'switch', 
+                'temperature-sensor', 'thermostat', 'tv', 'washer', 'zigbee-gateway'
+            ]
+            
+        return device_types
+
+    def _cleanup_temp_files(self):
+        """Clean up all temporary files at session start/end."""
+        try:
+            # Clean up temporary device registry
+            if self.temp_device_registry.exists():
+                self.temp_device_registry.unlink()
+                logger.debug("Cleaned up temporary device registry")
+            
+            # Clean up temporary nodes directory
+            if self.temp_nodes_dir.exists():
+                import shutil
+                shutil.rmtree(self.temp_nodes_dir)
+                logger.debug("Cleaned up temporary nodes directory")
+                
+            # Recreate temp nodes directory for this session
+            self.temp_nodes_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug("Created fresh temporary nodes directory")
+            
+        except Exception as e:
+            logger.debug(f"Error cleaning up temp files: {str(e)}")
+
+    def _get_node_temp_file(self, node_id: str) -> str:
+        """Get the path for a node's temporary JSON file."""
+        return self.temp_nodes_dir / f"temp_{node_id}.json"
+
+    def _create_node_temp_file(self, node_id: str, config_data: dict) -> str:
+        """Create a temporary JSON file for a specific node."""
+        try:
+            temp_file = self._get_node_temp_file(node_id)
+            
+            # Create node-specific config by copying template and setting node_id
+            node_config = config_data.copy()
+            node_config['node_id'] = node_id
+            node_config['timestamp'] = int(time.time() * 1000)
+            
+            # Write to temp file
+            with open(temp_file, 'w') as f:
+                json.dump(node_config, f, indent=2)
+                
+            logger.debug(f"Created temp file for node {node_id}: {temp_file}")
+            return str(temp_file)
+            
+        except Exception as e:
+            logger.debug(f"Error creating temp file for node {node_id}: {str(e)}")
+            return None
+
+    def _load_node_temp_file(self, node_id: str) -> dict:
+        """Load configuration from a node's temporary JSON file."""
+        try:
+            temp_file = self._get_node_temp_file(node_id)
+            if temp_file.exists():
+                with open(temp_file, 'r') as f:
+                    return json.load(f)
+            return None
+        except Exception as e:
+            logger.debug(f"Error loading temp file for node {node_id}: {str(e)}")
+            return None
+
+    def _add_to_temp_device_registry(self, device_type: str, device_config: dict):
+        """Add device configuration to temporary registry (not current_state.json)."""
+        try:
+            # Load existing temp registry
+            temp_registry = {}
+            if self.temp_device_registry.exists():
+                with open(self.temp_device_registry, 'r') as f:
+                    temp_registry = json.load(f)
+            
+            # Ensure devices field exists
+            if 'configured_devices' not in temp_registry:
+                temp_registry['configured_devices'] = []
+            
+            # Create device entry based on standard device config
+            device_entry = {
+                "device_type": device_type,
+                "name": device_config.get("name", device_type.title()),
+                "type": device_config.get("type", f"esp.device.{device_type}"),
+                "params": device_config.get("params", []),
+                "configured_at": int(time.time())
+            }
+            
+            # Remove any existing device with the same type to avoid duplicates
+            temp_registry['configured_devices'] = [d for d in temp_registry['configured_devices'] 
+                                                 if d.get('device_type') != device_type]
+            
+            # Add the new device
+            temp_registry['configured_devices'].append(device_entry)
+            
+            # Save updated temp registry
+            with open(self.temp_device_registry, 'w') as f:
+                json.dump(temp_registry, f, indent=2)
+                
+            logger.debug(f"Added {device_type} to temporary device registry")
+            click.echo(click.style(f"✓ Registered {device_type} device configuration", fg='green'))
+            
+        except Exception as e:
+            logger.debug(f"Error updating temp device registry: {str(e)}")
+            click.echo(click.style(f"Warning: Could not update device registry: {str(e)}", fg='yellow'))
+
+    def _create_device_config_from_standard_device(self, device_type: str) -> dict:
+        """Create a device configuration from standard_devices for a specific device type."""
+        try:
+            # Convert device type to filename format (with underscores and title case)
+            filename = device_type.replace('-', '_').title() + '.json'
+            standard_device_file = os.path.join(self.standard_devices_dir, filename)
+            
+            if not os.path.exists(standard_device_file):
+                logger.debug(f"Standard device file not found: {standard_device_file}")
+                return None
+                
+            # Load the standard device file
+            with open(standard_device_file, 'r') as f:
+                device_data = json.load(f)
+            
+            # Create config with minimal structure (no pre-filled services)
+            device_config = {
+                "config_version": "2025-01-20",
+                "devices": [device_data],  # Use device from standard_devices file
+                "info": {
+                    "fw_version": "1.0",
+                    "model": f"ESP-{device_data.get('name', 'Device')}",
+                    "name": "ESP RainMaker Device",
+                    "platform": "esp32",
+                    "project_name": "PROJECT_NAME_PLACEHOLDER",
+                    "type": device_type
+                },
+                "node_id": "NODE_ID_PLACEHOLDER",  # Will be replaced with actual node_id
+                "services": []  # Empty services - will be provided by tmp.json format files
+            }
+            
+            logger.debug(f"Created device config for {device_type} from standard device file: {filename}")
+            return device_config
+            
+        except Exception as e:
+            logger.debug(f"Error creating device config from standard device: {str(e)}")
+            return None
+
     async def _handle_config(self, args: List[str]):
         """Handle config command: config --device-type <type> [--config-file <file>]"""
         logger.debug(f"Handling config command with args: {args}")
         
         if any(a in args for a in ['help', '--help', '-h']):
             logger.debug("Showing config help")
+            
+            # Get available device types for help display
+            available_types = self._get_available_device_types()
+            types_str = ", ".join(available_types)
+            
             click.echo()
             click.echo("Usage: rmnode config [OPTIONS]")
             click.echo()
@@ -1058,9 +1259,10 @@ class PersistentShell:
 
             click.echo()
             click.echo("Options:")
-            click.echo("  --device-type TEXT    Device type to configure (light, heater, washer)")
+            click.echo(f"  --device-type TEXT    Device type to configure ({types_str})")
             click.echo("                        If not provided, uses current default configuration")
-            click.echo("  --config-file PATH    Optional JSON file containing configuration")
+            click.echo("  --config-file PATH    JSON file containing configuration")
+            click.echo("                        Supports both tmp.json and custom_state.json formats")
             click.echo("                        Device type will be taken from filename")
             click.echo("  --help                Show this message and exit")
             click.echo()
@@ -1068,11 +1270,17 @@ class PersistentShell:
             click.echo("      # Use current default configuration")
             click.echo("      rmnode config")
             click.echo()
-            click.echo("      # Switch to heater configuration (becomes new default)")
-            click.echo("      rmnode config --device-type heater")
+            # Show examples for each available device type
+            for i, device_type in enumerate(available_types[:3]):  # Show first 3 types
+                if i == 0:
+                    click.echo(f"      # Configure as {device_type} device (becomes new default)")
+                    click.echo(f"      rmnode config --device-type {device_type}")
+                else:
+                    click.echo(f"      rmnode config --device-type {device_type}")
             click.echo()
-            click.echo("      # Use custom config file (becomes new default)")
-            click.echo("      rmnode config --config-file wsh.json  # Uses 'wsh' as device type")
+            click.echo("      # Use custom config files (become new default)")
+            click.echo("      rmnode config --config-file custom_device.json       # custom_state.json format")
+            click.echo("      rmnode config --config-file temp_combined_device.json # tmp.json format (auto-transformed)")
             click.echo()
             click.echo("MQTT Topic:")
             click.echo("  node/<node_id>/config")
@@ -1112,27 +1320,23 @@ class PersistentShell:
             click.echo("Or use --b flag to use default configuration")
             return
                 
-        # If device type specified, use and set as default
+        # If device type specified, create config from standard device
         elif device_type:
-            if device_type not in ['light', 'heater', 'washer']:
+            available_types = self._get_available_device_types()
+            if device_type not in available_types:
                 logger.debug(f"Invalid device type: {device_type}")
                 click.echo(click.style(f"Invalid device type: {device_type}", fg='red'))
-                click.echo("Available types: light, heater, washer")
+                click.echo(f"Available types: {', '.join(available_types)}")
                 return
-            config_file = os.path.join(self.configs_dir, f"{device_type}_config.json")
-            logger.debug(f"Using device type config file: {config_file}")
-            if not os.path.exists(config_file):
-                logger.debug(f"Config file not found: {config_file}")
-                click.echo(click.style(f"Config file not found for {device_type}", fg='red'))
+            
+            # Create device config from standard_devices
+            device_config_data = self._create_device_config_from_standard_device(device_type)
+            if not device_config_data:
+                click.echo(click.style(f"Could not create configuration for {device_type}", fg='red'))
                 return
-            # Automatically update default when device type changes
-            try:
-                self._update_default_file('config', config_file)
-                logger.debug(f"Updated default config file to: {config_file}")
-                click.echo(click.style("✓ Updated default file for config", fg='green'))
-            except ValueError as e:
-                logger.debug(f"Could not update default file: {str(e)}")
-                click.echo(click.style(f"Warning: Could not update default: {str(e)}", fg='yellow'))
+            
+            logger.debug(f"Created device configuration for {device_type} from standard device file")
+            click.echo(click.style("✓ Generated device configuration from standard device", fg='green'))
                 
         # If config file specified
         elif config_file:
@@ -1154,9 +1358,95 @@ class PersistentShell:
                 logger.debug(f"Could not update default file: {str(e)}")
                 click.echo(click.style(f"Warning: Could not update default: {str(e)}", fg='yellow'))
                 
-        logger.debug(f"Calling _node_config with device_type={device_type}, config_file={config_file}")
-        # Call the config logic
-        await self._node_config(device_type, config_file)
+        # Call the config logic with the generated config data
+        if device_type and 'device_config_data' in locals():
+            logger.debug(f"Calling _node_config with device_type={device_type}, using generated config")
+            await self._node_config_with_data(device_type, device_config_data)
+        elif config_file:
+            logger.debug(f"Calling _node_config with device_type={device_type}, config_file={config_file}")
+            await self._node_config(device_type, config_file)
+
+    def _detect_config_format(self, config_data: dict) -> str:
+        """Detect whether the config is in tmp.json format or custom_state.json format."""
+        # Check for tmp.json format indicators
+        has_attributes = "attributes" in config_data
+        has_features = "features" in config_data
+        has_services_array = isinstance(config_data.get("services", []), list)
+        
+        # Check for custom_state.json format indicators
+        has_config_version = "config_version" in config_data
+        has_node_id = "node_id" in config_data
+        
+        # Determine format based on structure
+        if has_attributes or has_features:
+            logger.debug("Detected tmp.json format (has attributes or features)")
+            return "tmp_format"
+        elif has_config_version and has_node_id:
+            logger.debug("Detected custom_state.json format (has config_version and node_id)")
+            return "custom_state_format"
+        elif has_services_array and not has_config_version:
+            logger.debug("Detected tmp.json format (has services array without config_version)")
+            return "tmp_format"
+        else:
+            logger.debug("Defaulting to custom_state.json format")
+            return "custom_state_format"
+
+    def _transform_config_to_custom_state_format(self, source_config: dict) -> dict:
+        """Transform config from tmp.json format to custom_state.json format."""
+        logger.debug("Transforming config to custom_state.json format")
+        
+        # Create the custom_state format structure
+        transformed_config = {
+            "config_version": "2025-01-20",
+            "node_id": "NODE_ID_PLACEHOLDER",  # Will be updated per node
+            "info": {},
+            "devices": [],
+            "services": [],
+            "features": []
+        }
+        
+        # Map info section directly
+        if "info" in source_config:
+            transformed_config["info"] = source_config["info"]
+            logger.debug("Mapped info section")
+        
+        # Map devices section directly but ensure proper structure
+        if "devices" in source_config:
+            for device in source_config["devices"]:
+                transformed_device = dict(device)  # Copy all device properties
+                
+                # Add primary field if not present (use first parameter with write capability)
+                if "primary" not in transformed_device and "params" in transformed_device:
+                    for param in transformed_device["params"]:
+                        if "properties" in param and "write" in param["properties"]:
+                            transformed_device["primary"] = param["name"]
+                            break
+                
+                transformed_config["devices"].append(transformed_device)
+            logger.debug(f"Mapped {len(source_config['devices'])} devices")
+        
+        # Map services section directly
+        if "services" in source_config:
+            transformed_config["services"] = source_config["services"]
+            logger.debug(f"Mapped {len(source_config['services'])} services")
+        
+        # Handle features section - convert to services if needed
+        if "features" in source_config:
+            for feature in source_config["features"]:
+                # For now, keep features as-is (can be extended based on requirements)
+                transformed_config["features"].append(feature)
+            logger.debug(f"Mapped {len(source_config['features'])} features")
+        
+        # Handle attributes at root level (if present) - could be stored as node attributes
+        if "attributes" in source_config:
+            # For now, we'll store them in the info section as node_attributes
+            if "node_attributes" not in transformed_config["info"]:
+                transformed_config["info"]["node_attributes"] = []
+            transformed_config["info"]["node_attributes"] = source_config["attributes"]
+            logger.debug(f"Mapped {len(source_config['attributes'])} root-level attributes to info.node_attributes")
+        
+        logger.debug("Config transformation completed")
+        return transformed_config
 
     async def _node_config(self, device_type: str, config_file: str):
         """Handle node config command."""
@@ -1175,10 +1465,25 @@ class PersistentShell:
         # Load configuration from file
         try:
             with open(config_file, 'r') as f:
-                config = json.load(f)
+                source_config = json.load(f)
             logger.debug(f"Loaded configuration from {config_file}")
+            
+            # Detect format and handle accordingly
+            config_format = self._detect_config_format(source_config)
+            
+            if config_format == "tmp_format":
+                # Transform tmp.json format to custom_state.json format
+                config = self._transform_config_to_custom_state_format(source_config)
+                logger.debug("Transformed tmp.json format to custom_state.json format")
+                click.echo(click.style("✓ Detected tmp.json format - applied transformation", fg='green'))
+            else:
+                # Use custom_state.json format directly
+                config = source_config.copy()
+                logger.debug("Using custom_state.json format directly")
+                click.echo(click.style("✓ Detected custom_state.json format - using directly", fg='green'))
+            
         except Exception as e:
-            logger.debug(f"Error reading config file {config_file}: {str(e)}")
+            logger.debug(f"Error reading/processing config file {config_file}: {str(e)}")
             click.echo(click.style(f"Error reading config file: {str(e)}", fg='red'))
             return
             
@@ -1205,6 +1510,71 @@ class PersistentShell:
         logger.debug(f"Configuration completed: {success_count}/{len(nodes)} nodes successful")
         if success_count > 0:
             click.echo(click.style(f"Successfully configured {success_count}/{len(nodes)} nodes as {device_type}", fg='green'))
+            
+            # Add to temporary device registry (not current_state.json)
+            try:
+                self._add_to_temp_device_registry(device_type, config)
+            except Exception as e:
+                logger.debug(f"Error updating temp device registry: {str(e)}")
+                click.echo(click.style(f"Warning: Could not update device registry: {str(e)}", fg='yellow'))
+        else:
+            click.echo(click.style("Failed to configure any nodes", fg='red'))
+
+    async def _node_config_with_data(self, device_type: str, config_data: dict):
+        """Handle node config command with pre-generated config data using temp files."""
+        # Get target nodes
+        nodes = self.get_target_nodes()
+        if not nodes:
+            click.echo(click.style("No nodes available to configure", fg='yellow'))
+            return
+            
+        logger.debug(f"Starting node configuration for {len(nodes)} nodes")
+        logger.debug(f"Device type: {device_type}")
+        logger.debug(f"Using generated config data from standard device file + services template")
+        
+        click.echo(f"Configuring {len(nodes)} node(s) as {click.style(device_type, fg='cyan')} device...")
+        click.echo(f"Creating temp files for {len(nodes)} node(s)...")
+        
+        success_count = 0
+        for node_id in nodes:
+            try:
+                logger.debug(f"Configuring node {node_id}")
+                
+                # Create temporary file for this node (NEVER modify custom_state.json)
+                temp_file = self._create_node_temp_file(node_id, config_data)
+                if not temp_file:
+                    click.echo(click.style(f"Failed to create temp file for {node_id}", fg='red'))
+                    continue
+                
+                # Load from temp file for publishing
+                node_config = self._load_node_temp_file(node_id)
+                if not node_config:
+                    click.echo(click.style(f"Failed to load temp config for {node_id}", fg='red'))
+                    continue
+                
+                topic = f"node/{node_id}/config"
+                logger.debug(f"Publishing to topic: {topic} using temp file: {temp_file}")
+                
+                await self.manager.publish_to_node(node_id, topic, node_config)
+                success_count += 1
+                logger.debug(f"Successfully configured node {node_id} using temp file")
+                
+            except Exception as e:
+                logger.debug(f"Failed to configure node {node_id}: {str(e)}")
+                click.echo(click.style(f"Failed to configure {node_id}: {str(e)}", fg='red'))
+                
+        logger.debug(f"Configuration completed: {success_count}/{len(nodes)} nodes successful")
+        if success_count > 0:
+            click.echo(click.style(f"Successfully configured {success_count}/{len(nodes)} nodes as {device_type}", fg='green'))
+            click.echo(click.style(f"✓ Created {success_count} temp file(s) for session persistence", fg='green'))
+            
+            # Add to temporary device registry
+            try:
+                device_data = config_data.get('devices', [{}])[0]  # Get first device
+                self._add_to_temp_device_registry(device_type, device_data)
+            except Exception as e:
+                logger.debug(f"Error updating temp device registry: {str(e)}")
+                click.echo(click.style(f"Warning: Could not update device registry: {str(e)}", fg='yellow'))
         else:
             click.echo(click.style("Failed to configure any nodes", fg='red'))
 
@@ -2555,6 +2925,9 @@ class PersistentShell:
         # Clear active session at shell end
         self._clear_active_session()
         
+        # Clean up all temporary files (device registry + node temp files)
+        self._cleanup_temp_files()
+        
         click.echo(click.style("RM-Node CLI session terminated successfully", fg='blue', bold=True))
         self.running = False
         
@@ -2865,6 +3238,230 @@ class PersistentShell:
             click.echo()
         else:
             click.echo(click.style("Unknown option. Use 'history --help' for usage", fg='red'))
+
+    async def _handle_device_registry(self, args: List[str]):
+        """Show temporary device registry."""
+        if any(a in args for a in ['help', '--help', '-h']):
+            click.echo()
+            click.echo(click.style("Device Registry Help", fg='blue', bold=True))
+            click.echo("=" * 30)
+            click.echo("  device-registry              Show configured devices")
+            click.echo("  device-registry --clear      Clear device registry")
+            click.echo("  device-registry --help       Show this help")
+            click.echo()
+            click.echo("Note: Device registry is temporary and cleared on shell start/exit")
+            click.echo()
+            return
+            
+        if any(a in args for a in ['--clear', '-c']):
+            self._cleanup_temp_device_registry()
+            click.echo(click.style("✓ Device registry cleared", fg='green'))
+            return
+            
+        # Show device registry
+        try:
+            if not self.temp_device_registry.exists():
+                click.echo(click.style("No devices configured in this session", fg='yellow'))
+                return
+                
+            with open(self.temp_device_registry, 'r') as f:
+                temp_registry = json.load(f)
+                
+            devices = temp_registry.get('configured_devices', [])
+            if not devices:
+                click.echo(click.style("No devices configured in this session", fg='yellow'))
+                return
+                
+            click.echo(click.style("Configured Devices (This Session):", fg='blue', bold=True))
+            click.echo("=" * 50)
+            
+            for device in devices:
+                device_type = device.get('device_type', 'unknown')
+                name = device.get('name', 'Unknown')
+                device_esp_type = device.get('type', 'unknown')
+                configured_at = device.get('configured_at', 0)
+                
+                # Format timestamp
+                from datetime import datetime
+                time_str = datetime.fromtimestamp(configured_at).strftime('%H:%M:%S')
+                
+                click.echo(f"  • {click.style(device_type, fg='cyan')} ({name})")
+                click.echo(f"    Type: {device_esp_type}")
+                click.echo(f"    Configured: {time_str}")
+                click.echo()
+                
+        except Exception as e:
+            logger.debug(f"Error reading device registry: {str(e)}")
+            click.echo(click.style(f"Error reading device registry: {str(e)}", fg='red'))
+
+    async def _handle_temp_files(self, args: List[str]):
+        """Show temporary node files created during this session."""
+        if any(a in args for a in ['help', '--help', '-h']):
+            click.echo()
+            click.echo(click.style("Temp Files Help", fg='blue', bold=True))
+            click.echo("=" * 30)
+            click.echo("  temp-files                    Show temporary node files")
+            click.echo("  temp-files --clear            Clear all temp files")
+            click.echo("  temp-files --help             Show this help")
+            click.echo()
+            click.echo("Description:")
+            click.echo("  Shows temporary JSON files created for each node during this session.")
+            click.echo("  These files persist throughout the session and are cleaned up on exit.")
+            click.echo("  custom_state.json is clean template - device configs come from tmp.json format files.")
+            click.echo()
+            return
+            
+        if any(a in args for a in ['--clear', '-c']):
+            # Clear all temp files
+            try:
+                if self.temp_nodes_dir.exists():
+                    import shutil
+                    shutil.rmtree(self.temp_nodes_dir)
+                    self.temp_nodes_dir.mkdir(parents=True, exist_ok=True)
+                    click.echo(click.style("✓ All temp files cleared", fg='green'))
+                else:
+                    click.echo(click.style("No temp files to clear", fg='yellow'))
+            except Exception as e:
+                click.echo(click.style(f"Error clearing temp files: {str(e)}", fg='red'))
+            return
+            
+        # Show temp files
+        try:
+            if not self.temp_nodes_dir.exists():
+                click.echo(click.style("No temp files directory exists", fg='yellow'))
+                return
+                
+            temp_files = list(self.temp_nodes_dir.glob("temp_*.json"))
+            if not temp_files:
+                click.echo(click.style("No temporary node files in this session", fg='yellow'))
+                return
+                
+            click.echo(click.style("Temporary Node Files (This Session):", fg='blue', bold=True))
+            click.echo("=" * 50)
+            
+            for temp_file in sorted(temp_files):
+                try:
+                    # Extract node_id from filename
+                    node_id = temp_file.stem.replace('temp_', '')
+                    
+                    # Load file to get info
+                    with open(temp_file, 'r') as f:
+                        node_config = json.load(f)
+                    
+                    devices = node_config.get('devices', [])
+                    services = node_config.get('services', [])
+                    timestamp = node_config.get('timestamp', 0)
+                    
+                    # Format timestamp
+                    from datetime import datetime
+                    time_str = datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M:%S') if timestamp else 'Unknown'
+                    
+                    click.echo(f"  • {click.style(node_id, fg='cyan')} ({temp_file.name})")
+                    click.echo(f"    Devices: {len(devices)}, Services: {len(services)}")
+                    click.echo(f"    Last Updated: {time_str}")
+                    click.echo(f"    File Size: {temp_file.stat().st_size} bytes")
+                    
+                    if devices:
+                        device_names = [d.get('name', 'Unknown') for d in devices]
+                        click.echo(f"    Device Names: {', '.join(device_names)}")
+                    
+                    click.echo()
+                    
+                except Exception as e:
+                    click.echo(f"  • {temp_file.name} (Error reading: {str(e)})")
+                    
+            click.echo(click.style(f"Total: {len(temp_files)} temp file(s)", fg='green'))
+            click.echo(click.style("Note: custom_state.json is clean template for transformation", fg='blue'))
+                
+        except Exception as e:
+            logger.debug(f"Error reading temp files: {str(e)}")
+            click.echo(click.style(f"Error reading temp files: {str(e)}", fg='red'))
+
+    async def _handle_publish_state(self, args: List[str]):
+        """Publish custom_state.json template to all connected nodes with their node_id."""
+        if any(a in args for a in ['help', '--help', '-h']):
+            click.echo()
+            click.echo(click.style("Publish State Help", fg='blue', bold=True))
+            click.echo("=" * 30)
+            click.echo("  publish-state                 Publish custom_state.json to all connected nodes")
+            click.echo("  publish-state --help          Show this help")
+            click.echo()
+            click.echo("Description:")
+            click.echo("  Loads custom_state.json template and publishes it to each connected node")
+            click.echo("  with the node_id field set to the respective node's ID.")
+            click.echo("  Note: custom_state.json is now a clean template - use config --config-file for full configs.")
+            click.echo()
+            click.echo("MQTT Topic:")
+            click.echo("  node/<node_id>/state")
+            click.echo()
+            return
+
+        # Get target nodes
+        nodes = self.get_target_nodes()
+        if not nodes:
+            click.echo(click.style("No nodes available to publish state to", fg='yellow'))
+            return
+
+        # Load custom_state.json
+        if not os.path.exists(self.custom_state_file):
+            click.echo(click.style("custom_state.json not found", fg='red'))
+            return
+
+        try:
+            with open(self.custom_state_file, 'r') as f:
+                state_template = json.load(f)
+            logger.debug(f"Loaded state template from {self.custom_state_file}")
+        except Exception as e:
+            logger.debug(f"Error reading custom_state.json: {str(e)}")
+            click.echo(click.style(f"Error reading custom_state.json: {str(e)}", fg='red'))
+            return
+
+        # Check if template is empty and warn user
+        devices_count = len(state_template.get('devices', []))
+        services_count = len(state_template.get('services', []))
+        
+        if devices_count == 0 and services_count == 0:
+            click.echo(click.style("Warning: custom_state.json is empty (no devices or services)", fg='yellow'))
+            click.echo("This will publish an empty configuration to nodes.")
+            click.echo("Consider using 'config --config-file' with a tmp.json format file instead.")
+
+        click.echo(f"Publishing complete state to {len(nodes)} node(s)...")
+        click.echo(f"  • {devices_count} device(s)")
+        click.echo(f"  • {services_count} service(s)")
+        
+        success_count = 0
+        for node_id in nodes:
+            try:
+                logger.debug(f"Publishing state to node {node_id}")
+                
+                # Create temporary file for this node (NEVER modify custom_state.json)
+                temp_file = self._create_node_temp_file(node_id, state_template)
+                if not temp_file:
+                    click.echo(click.style(f"Failed to create temp file for {node_id}", fg='red'))
+                    continue
+                
+                # Load from temp file for publishing
+                node_state = self._load_node_temp_file(node_id)
+                if not node_state:
+                    click.echo(click.style(f"Failed to load temp state for {node_id}", fg='red'))
+                    continue
+                
+                topic = f"node/{node_id}/state"
+                logger.debug(f"Publishing to topic: {topic} using temp file: {temp_file}")
+                
+                await self.manager.publish_to_node(node_id, topic, node_state)
+                success_count += 1
+                logger.debug(f"Successfully published state to node {node_id} using temp file")
+                
+            except Exception as e:
+                logger.debug(f"Failed to publish state to node {node_id}: {str(e)}")
+                click.echo(click.style(f"Failed to publish state to {node_id}: {str(e)}", fg='red'))
+
+        logger.debug(f"State publishing completed: {success_count}/{len(nodes)} nodes successful")
+        if success_count > 0:
+            click.echo(click.style(f"Successfully published complete state to {success_count}/{len(nodes)} nodes", fg='green'))
+        else:
+            click.echo(click.style("Failed to publish state to any nodes", fg='red'))
 
     def get_prompt(self) -> str:
         """Get the shell prompt showing connected nodes."""
