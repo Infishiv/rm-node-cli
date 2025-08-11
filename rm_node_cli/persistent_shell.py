@@ -602,8 +602,8 @@ class PersistentShell:
         click.echo("  history             View command history")
         click.echo("  exit                Exit CLI")
         click.echo()
-        click.echo(click.style("💡 Ready! Type 'help' to see all available commands", fg='yellow'))
-        click.echo(click.style("💡 Use ↑/↓ arrows to navigate command history", fg='cyan'))
+        click.echo(click.style("Ready! Type 'help' to see all available commands", fg='yellow'))
+        click.echo(click.style("Use ↑/↓ arrows to navigate command history", fg='cyan'))
         click.echo("=" * 40)
         click.echo()
         
@@ -738,8 +738,8 @@ class PersistentShell:
         click.echo("  disconnect              Disconnect from nodes (all or specific)")
         click.echo("  exit                    Exit CLI")
         click.echo()
-        click.echo(click.style("💡 Use '<command> --help' for detailed command help", fg='yellow'))
-        click.echo(click.style("💡 Use 'help utility' for detailed utility commands help", fg='yellow'))
+        click.echo(click.style("Use '<command> --help' for detailed command help", fg='yellow'))
+        click.echo(click.style("Use 'help utility' for detailed utility commands help", fg='yellow'))
         click.echo()
                 
     async def _show_section_help(self, section: str):
@@ -777,7 +777,7 @@ class PersistentShell:
             click.echo()
             click.echo(click.style("USAGE:", fg='yellow', bold=True))
             click.echo("  fetch <version>              Request firmware download")
-            click.echo("  send-ota-status [--job-id <id>] Send OTA status to nodes")
+            click.echo("  send-ota-status --status <status> [--job-id <id>] Send OTA status to nodes")
             click.echo("  view-ota-jobs [--node-id <id>]    View stored active OTA jobs")
             click.echo("  view-ota-history [--node-id <id>] View completed OTA jobs with status")
             click.echo("  clear-ota-jobs [--node-id <id>] Clear stored OTA job data")
@@ -789,8 +789,8 @@ class PersistentShell:
             click.echo()
             click.echo(click.style("EXAMPLES:", fg='cyan', bold=True))
             click.echo("  fetch 1.2.3")
-            click.echo("  send-ota-status")
-            click.echo("  send-ota-status --job-id job123")
+            click.echo("  send-ota-status --status success")
+            click.echo("  send-ota-status --status failed --job-id job123")
             click.echo("  view-ota-jobs")
             click.echo("  view-ota-jobs --node-id node123")
             click.echo("  view-ota-history")
@@ -804,7 +804,7 @@ class PersistentShell:
             click.echo()
             click.echo(click.style("BEHAVIOR:", fg='white', bold=True))
             click.echo("  • fetch: Requests firmware download URLs from cloud")
-            click.echo("  • send-ota-status: Sends 'success' status to nodes with active OTA jobs")
+            click.echo("  • send-ota-status: Sends OTA status to ALL OTA jobs for nodes (configurable status value)")
             click.echo("  • view-ota-jobs: View stored active OTA job information")
             click.echo("  • view-ota-history: View completed OTA jobs with their final status")
             click.echo("  • clear-ota-jobs: Clear stored OTA job data from both active and history")
@@ -975,7 +975,7 @@ class PersistentShell:
         monitored_topics = [
             "params/remote",      # Parameter responses from nodes
             "otaurl",            # OTA URL responses from nodes
-            "to-node",           # Command requests to nodes (we monitor)
+            "to-node"            # Command requests to nodes (we monitor)
         ]
         
         click.echo(click.style("Monitored Topics (per node):",fg='yellow',bold=True))
@@ -988,7 +988,7 @@ class PersistentShell:
         topic_descriptions = {
             "params/remote": "Parameter responses from nodes",
             "otaurl": "OTA firmware download URLs from nodes", 
-            "to-node": "Command requests sent from cloud to nodes",
+            "to-node": "Command requests sent from cloud to nodes"
         }
         
         for topic, description in topic_descriptions.items():
@@ -2053,127 +2053,155 @@ class PersistentShell:
             click.echo(click.style("Failed to send OTA fetch request to any nodes", fg='red'))
 
     async def _handle_send_ota_status(self, args: List[str]):
-        """Handle send-ota-status command: send-ota-status [--job-id <id>]"""
+        """Handle send-ota-status command: send-ota-status --status <status> [--job-id <id>]"""
         if any(a in args for a in ['help', '--help', '-h']):
             click.echo()
             click.echo(click.style("┌─ SEND-OTA-STATUS Command Help", fg='green', bold=True))
-            click.echo("Send OTA status to nodes with stored OTA jobs")
+            click.echo("Send OTA status to nodes")
             click.echo()
             click.echo(click.style("USAGE:", fg='yellow', bold=True))
-            click.echo("  send-ota-status [--job-id <id>]")
+            click.echo("  send-ota-status --status <status> [--job-id <id>]")
             click.echo()
             click.echo(click.style("OPTIONS:", fg='blue', bold=True))
             click.echo("  --job-id TEXT     Optional: Specific OTA job ID to send status for")
-            click.echo("                     If not provided, sends 'success' to all nodes with stored jobs")
+            click.echo("                     If not provided, sends status to all nodes with stored jobs")
+            click.echo("  --status TEXT     Required: Status value to send (e.g., 'success', 'failed', 'in_progress')")
             click.echo("  --help            Show this message and exit")
             click.echo()
             click.echo(click.style("EXAMPLES:", fg='cyan', bold=True))
-            click.echo("  # Send 'success' status to all nodes with stored OTA jobs")
-            click.echo("  send-ota-status")
+            click.echo("  # Send status to ALL OTA jobs for all nodes with stored OTA jobs")
+            click.echo("  send-ota-status --status success")
             click.echo()
-            click.echo("  # Send 'success' status for specific job ID")
-            click.echo("  send-ota-status --job-id SjkorPDgo9Y7pZfPLAuuNc")
+            click.echo("  # Send status for specific job ID only")
+            click.echo("  send-ota-status --job-id SjkorPDgo9Y7pZfPLAuuNc --status failed")
+            click.echo()
+            click.echo("  # Send status for specific job ID (different status)")
+            click.echo("  send-ota-status --job-id SjkorPDgo9Y7pZfPLAuuNc --status in_progress")
             click.echo()
             click.echo(click.style("BEHAVIOR:", fg='white', bold=True))
-            click.echo("  • Without --job-id: Sends 'success' status to all nodes that have stored OTA jobs")
-            click.echo("  • With --job-id: Sends 'success' status only to nodes that have the specific job ID")
-            click.echo("  • Status is always 'success' (hardcoded for simplicity)")
+            click.echo("  • Without --job-id: Sends status to ALL OTA jobs for all nodes that have stored OTA jobs")
+            click.echo("  • With --job-id: Sends status only to nodes that have the specific job ID")
+            click.echo("  • --status is required and must be provided")
+            click.echo("  • Job ID can be any valid ID (not restricted to stored jobs)")
             click.echo()
             click.echo(click.style("MQTT TOPIC:", fg='magenta', bold=True))
             click.echo("  node/<node_id>/otastatus")
             click.echo()
             return
         
-        # Parse job_id if provided
+        # Parse arguments
         job_id = None
+        status = None
         i = 0
         while i < len(args):
             if args[i] == '--job-id' and i+1 < len(args):
                 job_id = args[i+1]
                 i += 2
+            elif args[i] == '--status' and i+1 < len(args):
+                status = args[i+1]
+                i += 2
             else:
                 i += 1
         
+        # Status is required
+        if not status:
+            click.echo(click.style("✗ Error: --status is required", fg='red'))
+            click.echo("Usage: send-ota-status --status <status> [--job-id <id>]")
+            click.echo("Example: send-ota-status --status success")
+            return
+        
         # Call the send OTA status logic
-        await self._handle_send_ota_status_core(job_id)
+        await self._handle_send_ota_status_core(job_id, status)
 
-    async def _handle_send_ota_status_core(self, job_id: Optional[str] = None):
-        """Send OTA status to nodes with stored OTA jobs."""
+    async def _handle_send_ota_status_core(self, job_id: Optional[str] = None, status: str = "success"):
+        """Send OTA status to nodes."""
         # Get stored OTA jobs (only active jobs)
         all_ota_jobs = self.manager.get_ota_jobs()
-        
-        if not all_ota_jobs:
-            click.echo(click.style("No active OTA jobs found", fg='yellow'))
-            click.echo("Use 'view-ota-jobs' to view active OTA jobs")
-            return
         
         # Determine which nodes to send status to
         target_nodes = []
         
+        
         if job_id:
-            # Send status only to nodes that have the specific job ID
-            for node_id, jobs in all_ota_jobs.items():
-                if job_id in jobs:
-                    target_nodes.append(node_id)
-            
+            # If specific job ID provided, send to all target nodes (not restricted to stored jobs)
+            target_nodes = self.get_target_nodes()
             if not target_nodes:
-                click.echo(click.style(f"No nodes found with OTA job ID: {job_id}", fg='yellow'))
-                click.echo("Use 'view-ota-jobs' to view available job IDs")
+                click.echo(click.style("No target nodes available", fg='yellow'))
                 return
                 
-            click.echo(f"Sending 'success' status for job ID '{job_id}' to {len(target_nodes)} node(s)...")
+            click.echo(f"Sending '{status}' status for job ID '{job_id}' to {len(target_nodes)} node(s)...")
         else:
             # Send status to all nodes that have any stored OTA jobs
+            if not all_ota_jobs:
+                click.echo(click.style("No active OTA jobs found", fg='yellow'))
+                click.echo("Use 'view-ota-jobs' to view active OTA jobs")
+                return
+                
             target_nodes = [node_id for node_id, jobs in all_ota_jobs.items() if jobs]
             
             if not target_nodes:
                 click.echo(click.style("No nodes with active OTA jobs found", fg='yellow'))
                 return
                 
-            click.echo(f"Sending 'success' status to {len(target_nodes)} node(s) with active OTA jobs...")
+            click.echo(f"Sending '{status}' status to {len(target_nodes)} node(s) with active OTA jobs...")
         
         # Send status to target nodes
         success_count = 0
-        status = "success"  # Hardcoded to 'success' as requested
+        total_jobs_processed = 0
         
         for node_id in target_nodes:
             try:
-                # Get the actual job ID to use
-                actual_job_id = job_id if job_id else list(all_ota_jobs[node_id].keys())[0]
-                
-                # Prepare payload
-                payload = {
-                    "status": status,
-                    "ota_job_id": actual_job_id,
-                    "timestamp": int(time.time() * 1000)
-                }
-                
-                # Publish to OTA status topic
-                topic = f"node/{node_id}/otastatus"
-                await self.manager.publish_to_node(node_id, topic, json.dumps(payload))
-                
-                # Move job to history (except for in-progress status)
-                if status != "in-progress":
-                    self.manager.move_ota_job_to_history(node_id, actual_job_id, status)
-                    click.echo(click.style(f"✓ Sent '{status}' status to node {node_id} (moved to history)", fg='green'))
+                if job_id:
+                    # If specific job ID provided, send status for that job only
+                    job_ids_to_process = [job_id]
                 else:
-                    click.echo(click.style(f"✓ Sent '{status}' status to node {node_id} (kept active)", fg='green'))
+                    # Send status to ALL OTA jobs for this node
+                    job_ids_to_process = list(all_ota_jobs[node_id].keys())
                 
-                success_count += 1
+                node_success_count = 0
+                for actual_job_id in job_ids_to_process:
+                    try:
+                        # Prepare payload
+                        payload = {
+                            "status": status,
+                            "ota_job_id": actual_job_id,
+                            "timestamp": int(time.time() * 1000)
+                        }
+                        
+                        # Publish to OTA status topic
+                        topic = f"node/{node_id}/otastatus"
+                        await self.manager.publish_to_node(node_id, topic, json.dumps(payload))
+                        
+                        # Move job to history (except for in-progress status)
+                        if status != "in-progress":
+                            self.manager.move_ota_job_to_history(node_id, actual_job_id, status)
+                        
+                        node_success_count += 1
+                        total_jobs_processed += 1
+                        
+                    except Exception as e:
+                        click.echo(click.style(f"✗ Failed to send status for job {actual_job_id} to node {node_id}: {str(e)}", fg='red'))
+                
+                if node_success_count > 0:
+                    if status != "in-progress":
+                        click.echo(click.style(f"✓ Sent '{status}' status to node {node_id} for {node_success_count} job(s) (moved to history)", fg='green'))
+                    else:
+                        click.echo(click.style(f"✓ Sent '{status}' status to node {node_id} for {node_success_count} job(s) (kept active)", fg='green'))
+                    success_count += 1
                 
             except Exception as e:
-                click.echo(click.style(f"✗ Failed to send status to node {node_id}: {str(e)}", fg='red'))
+                click.echo(click.style(f"✗ Failed to process node {node_id}: {str(e)}", fg='red'))
         
         # Summary
         click.echo()
         click.echo(click.style(f"Successfully sent OTA status to {success_count}/{len(target_nodes)} nodes", fg='green'))
         click.echo(f"Status: {status}")
-        click.echo(f"Job ID: {job_id if job_id else 'auto-selected'}")
+        click.echo(f"Total jobs processed: {total_jobs_processed}")
         click.echo(f"Topic: node/<node_id>/otastatus")
         if status != "in-progress":
-            click.echo(f"Jobs moved to history: {success_count}")
+            click.echo(f"Jobs moved to history: {total_jobs_processed}")
         else:
-            click.echo(f"Jobs kept active: {success_count}")
+            click.echo(f"Jobs kept active: {total_jobs_processed}")
 
     async def _handle_ota_jobs(self, args: List[str]):
         """Handle view-ota-jobs command: view-ota-jobs [--node-id <node_id>]"""
@@ -2220,7 +2248,7 @@ class PersistentShell:
             
         # Display OTA jobs
         click.echo()
-        click.echo(click.style("📋 Stored OTA Jobs", fg='blue', bold=True))
+        click.echo(click.style("Stored OTA Jobs", fg='blue', bold=True))
         click.echo("=" * 60)
         
         total_jobs = 0
@@ -2295,7 +2323,7 @@ class PersistentShell:
             
         # Display OTA history
         click.echo()
-        click.echo(click.style("📋 Completed OTA Jobs History", fg='blue', bold=True))
+        click.echo(click.style("Completed OTA Jobs History", fg='blue', bold=True))
         click.echo("=" * 60)
         
         total_jobs = 0
@@ -2890,10 +2918,11 @@ class PersistentShell:
                 else:
                     click.echo(click.style(f"Node {target_node} is not connected", fg='yellow'))
         else:
-            # Disconnect from all nodes
-            success_count, total_count = await self.manager.disconnect_all_nodes()
-            click.echo(click.style(f"✓ Disconnected from {success_count}/{total_count} nodes", fg='green'))
+            # Disconnect from all nodes using fast cleanup
+            await self.manager.cleanup()
+            success_count = len(target_nodes)
             failed_nodes = []
+            click.echo(click.style(f"✓ Fast cleanup completed for {success_count} nodes", fg='green'))
         
         # Summary
         click.echo()
@@ -2913,14 +2942,17 @@ class PersistentShell:
 
     async def _handle_exit(self, args: List[str]):
         """Exit the shell."""
-        # Disconnect from all nodes before exiting
+        # Suppress AWS IoT SDK logging during shutdown to eliminate error messages
+        self._suppress_aws_logging()
+        
+        # Suppress all logging during shutdown
+        logging.getLogger().setLevel(logging.CRITICAL)
+        
+        # Stop all connections and monitoring silently
         connected_nodes = self.manager.get_connected_nodes()
         if connected_nodes:
-            click.echo(f"Disconnecting from {len(connected_nodes)} node(s) before exit...")
-            
-            # Use the manager's disconnect method
-            success_count, total_count = await self.manager.disconnect_all_nodes()
-            click.echo(click.style(f"✓ Disconnected from {success_count}/{total_count} nodes", fg='green'))
+            # Use fast cleanup instead of verbose disconnect
+            await self.manager.cleanup()
         
         # Clear active session at shell end
         self._clear_active_session()
@@ -2931,6 +2963,27 @@ class PersistentShell:
         click.echo(click.style("RM-Node CLI session terminated successfully", fg='blue', bold=True))
         self.running = False
         
+    def _suppress_aws_logging(self):
+        """Suppress AWS IoT SDK logging during shutdown."""
+        # Suppress all AWS IoT SDK logging
+        for logger_name in ['AWSIoTPythonSDK', 
+                          'AWSIoTPythonSDK.core',
+                          'AWSIoTPythonSDK.core.protocol.internal.clients',
+                          'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                          'AWSIoTPythonSDK.core.protocol.internal.workers',
+                          'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                          'AWSIoTPythonSDK.core.protocol.internal.events',
+                          'AWSIoTPythonSDK.core.protocol.internal.connection',
+                          'AWSIoTPythonSDK.core.protocol.internal.threading',
+                          'AWSIoTPythonSDK.core.protocol.internal.websocket']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.CRITICAL)
+        
+        # Also suppress any other potential verbose loggers
+        for logger_name in ['paho.mqtt', 'paho.mqtt.client', 'paho.mqtt.publish']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.CRITICAL)
+
     async def _handle_session_history(self, args: List[str]):
         """Handle session-history command: session-history [--node-id <node_id>]"""
         if any(a in args for a in ['help', '--help', '-h']):
@@ -2966,7 +3019,7 @@ class PersistentShell:
                 
         # Display session history
         click.echo()
-        click.echo(click.style("📋 Connection Session History", fg='blue', bold=True))
+        click.echo(click.style("Connection Session History", fg='blue', bold=True))
         click.echo("=" * 60)
         
         # Show session-level information if available
@@ -3090,7 +3143,7 @@ class PersistentShell:
         summary = logger.get_log_summary()
         
         click.echo()
-        click.echo(click.style("🔍 Checking for Issues", fg='blue', bold=True))
+        click.echo(click.style("Checking for Issues", fg='blue', bold=True))
         click.echo("=" * 40)
         
         has_issues = False
@@ -3098,17 +3151,17 @@ class PersistentShell:
         # Check for crashes
         if summary['crash_count'] > 0:
             has_issues = True
-            click.echo(click.style(f"⚠️  Found {summary['crash_count']} crash(es)", fg='red'))
+            click.echo(click.style(f"Found {summary['crash_count']} crash(es)", fg='red'))
         
         # Check for monitoring issues
         if summary['monitoring_issues_count'] > 0:
             has_issues = True
-            click.echo(click.style(f"⚠️  Found {summary['monitoring_issues_count']} monitoring issue(s)", fg='yellow'))
+            click.echo(click.style(f"Found {summary['monitoring_issues_count']} monitoring issue(s)", fg='yellow'))
         
         # Check for general errors
         if summary['error_count'] > 0:
             has_issues = True
-            click.echo(click.style(f"⚠️  Found {summary['error_count']} error(s)", fg='red'))
+            click.echo(click.style(f"Found {summary['error_count']} error(s)", fg='red'))
         
         if not has_issues:
             click.echo(click.style("✅ No issues found", fg='green'))
@@ -3181,7 +3234,7 @@ class PersistentShell:
             return
         
         click.echo()
-        click.echo(click.style("⚠️  Recent Monitoring Issues", fg='yellow', bold=True))
+        click.echo(click.style("Recent Monitoring Issues", fg='yellow', bold=True))
         click.echo("=" * 40)
         
         for issue in summary['recent_monitoring_issues'][-10:]:

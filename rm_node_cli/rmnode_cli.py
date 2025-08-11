@@ -48,21 +48,21 @@ class RMNodeManager:
         
         # Optimized for ESP RainMaker (20s keep-alive) 
         pool_config = PoolConfig(
-            max_concurrent_connections=min(max_nodes, 100),  # AWS IoT limits
-            connection_rate_limit=30,  # Faster startup
-            batch_size=15,  # Smaller batches for better progress feedback
-            circuit_breaker_threshold=3,  # Faster failure detection  
-            circuit_breaker_timeout=120,  # 2 minutes (faster recovery)
-            connection_timeout=8,  # Optimized for ESP RainMaker
-            operation_timeout=6,   # Optimized for ESP RainMaker
-            health_check_interval=25,  # Aligned with ESP 20s keep-alive
-            max_retries=2,  # Fewer retries for faster startup
-            esp_keepalive_time=20  # ESP RainMaker keep-alive period
+            max_concurrent_connections=0,  # Unlimited connections
+            connection_rate_limit=0,       # Unlimited rate
+            batch_size=0,                  # No batching
+            circuit_breaker_threshold=3,   # Faster failure detection  
+            circuit_breaker_timeout=120,   # 2 minutes (faster recovery)
+            connection_timeout=8,          # Optimized for ESP RainMaker
+            operation_timeout=6,           # Optimized for ESP RainMaker
+            health_check_interval=25,      # Aligned with ESP 20s keep-alive
+            max_retries=2,                 # Fewer retries for faster startup
+            esp_keepalive_time=20         # ESP RainMaker keep-alive period
         )
         
         self.connection_pool = ConnectionPool(pool_config)
-        self.adaptive_monitor = AdaptiveMonitor(max_concurrent_monitors=min(max_nodes // 10, 50))
-        self.subscription_manager = SelectiveSubscriptionManager(max_subscriptions=min(max_nodes * 3, 300))
+        self.adaptive_monitor = AdaptiveMonitor(max_concurrent_monitors=0)  # Unlimited monitoring
+        self.subscription_manager = SelectiveSubscriptionManager(max_subscriptions=None)  # Unlimited subscriptions
         
         # Background task for maintaining connections
         self.connection_task = None
@@ -189,7 +189,7 @@ class RMNodeManager:
             click.echo(click.style(f"✓ Connected to {connected_count}/{total_count} nodes", fg='green'))
             
             # Show timing information
-            click.echo(click.style("🔄 Finalizing setup...", fg='yellow'))
+            click.echo(click.style("Finalizing setup...", fg='yellow'))
             
             # Start optimized monitoring
             await self._start_optimized_monitoring(connected_nodes)
@@ -204,7 +204,7 @@ class RMNodeManager:
     async def _start_optimized_monitoring(self, connected_nodes: List[str]):
         """Start optimized monitoring for connected nodes."""
         try:
-            click.echo(click.style("🔄 Setting up adaptive monitoring...", fg='yellow'))
+            click.echo(click.style("Setting up adaptive monitoring...", fg='yellow'))
             
             # Start adaptive monitor (this should be fast)
             await self.adaptive_monitor.start()
@@ -222,11 +222,11 @@ class RMNodeManager:
                 self.adaptive_monitor.add_node(node_id, level)
                 
             click.echo(click.style(f"✓ Started optimized monitoring for {len(connected_nodes)} nodes", fg='blue'))
-            click.echo(click.style("💡 Monitoring adapts automatically based on node health", fg='cyan'))
+            click.echo(click.style("Monitoring adapts automatically based on node health", fg='cyan'))
             
         except Exception as e:
             logger.error(f"Error starting optimized monitoring: {str(e)}")
-            click.echo(click.style(f"⚠ Monitoring setup had issues: {str(e)}", fg='yellow'))
+            click.echo(click.style(f"Monitoring setup had issues: {str(e)}", fg='yellow'))
             
     def get_connection(self, node_id: str):
         """Get connection for a specific node."""
@@ -258,14 +258,15 @@ class RMNodeManager:
         """Stop the background connection and monitoring tasks."""
         self.is_running = False
         
-        # Stop connection pool
+        # Stop connection pool silently
         if self.connection_pool:
             await self.connection_pool.stop()
             
-        # Stop monitoring
+        # Stop monitoring silently
         if self.adaptive_monitor:
             await self.adaptive_monitor.stop()
             
+        # Cancel background tasks silently
         if self.connection_task:
             self.connection_task.cancel()
             try:
@@ -312,82 +313,129 @@ class RMNodeManager:
 
     @debug_step("Starting background listeners")
     async def start_background_listeners(self):
-        """Start optimized background listeners using selective subscription."""
-        connected_nodes = self.connection_pool.get_connected_nodes()
+        """Start background listeners for all connected nodes."""
+        logger.debug("Setting up background listeners...")
+        
+        # Get list of connected nodes
+        connected_nodes = self.get_connected_nodes()
         if not connected_nodes:
+            logger.debug("No connected nodes to set up listeners for")
             return
             
-        # Topics to subscribe to for all nodes
+        # Define topics to subscribe to
         topics = [
-            "params/remote",      # Parameter responses from nodes
-            "otaurl",            # OTA URL responses from nodes
-            "to-node",           # Command requests to nodes (we monitor)
+            "params/remote",    # Remote parameter requests
+            "otaurl",          # OTA URL responses (critical for OTA jobs)
+            "to-node"          # Command requests to nodes
         ]
         
+        # Create message handler factory with proper message processing
         def create_message_handler(node_id: str, topic_suffix: str):
-            """Create a message handler for a specific node and topic."""
             def handler(client, userdata, message):
                 try:
-                    payload = message.payload.decode('utf-8')
-                    timestamp = click.style(f"[{time.strftime('%H:%M:%S')}]", fg='blue')
-                    node_color = click.style(f"[{node_id}]", fg='cyan')
-                    topic_color = click.style(f"[{topic_suffix}]", fg='yellow')
-                    click.echo(f"{timestamp} {node_color} {topic_color} {payload}")
+                    payload = json.loads(message.payload.decode())
+                    logger.debug(f"Message from {node_id}/{topic_suffix}: {payload}")
                     
-                    # Special handling for OTA URL responses
+                    # Show actual response content in console for all monitored topics
                     if topic_suffix == "otaurl":
                         try:
-                            ota_response = json.loads(payload)
-                            if self.store_ota_job(node_id, ota_response):
-                                click.echo(click.style(f"✓ Stored OTA job {ota_response.get('ota_job_id', 'unknown')} for {node_id}", fg='green'))
-                        except json.JSONDecodeError:
-                            logger.debug(f"Invalid JSON in OTA response from {node_id}")
+                            # Store OTA job information using the manager instance
+                            self.store_ota_job(node_id, payload)
+                            logger.info(f"Stored OTA job for {node_id}: {payload.get('ota_job_id', 'unknown')}")
+                            # Show OTA response with job ID
+                            click.echo(click.style(f"📥 OTA Response from {node_id}:", fg='blue'))
+                            click.echo(f"   Job ID: {payload.get('ota_job_id', 'unknown')}")
+                            if 'url' in payload:
+                                click.echo(f"   URL: {payload.get('url', 'N/A')}")
+                            if 'version' in payload:
+                                click.echo(f"   Version: {payload.get('version', 'N/A')}")
                         except Exception as e:
-                            logger.debug(f"Error processing OTA response from {node_id}: {str(e)}")
+                            logger.error(f"Failed to store OTA job for {node_id}: {str(e)}")
                     
-                    # Store node responses from to-node topic
-                    elif topic_suffix == "to-node":
-                        try:
-                            response_data = json.loads(payload)
-                            # Store in persistent shell if available
-                            if hasattr(self, 'shell') and hasattr(self.shell, '_store_node_response'):
-                                self.shell._store_node_response(node_id, response_data)
-                                click.echo(click.style(f"✓ Stored node response for {node_id}", fg='green'))
-                        except json.JSONDecodeError:
-                            logger.debug(f"Invalid JSON in node response from {node_id}")
-                        except Exception as e:
-                            logger.debug(f"Error processing node response from {node_id}: {str(e)}")
-                    
-                    # Store remote parameters from params/remote topic
                     elif topic_suffix == "params/remote":
-                        try:
-                            params_data = json.loads(payload)
-                            # Store in persistent shell if available
-                            if hasattr(self, 'shell') and hasattr(self.shell, '_store_remote_params'):
-                                self.shell._store_remote_params(node_id, params_data)
-                                click.echo(click.style(f"✓ Stored remote params for {node_id}", fg='green'))
-                        except json.JSONDecodeError:
-                            logger.debug(f"Invalid JSON in remote params from {node_id}")
-                        except Exception as e:
-                            logger.debug(f"Error processing remote params from {node_id}: {str(e)}")
-                            
-                except Exception as e:
-                    logger.debug(f"Error handling message from {node_id}: {str(e)}")
+                        # Show parameter response content
+                        click.echo(click.style(f"📥 Params Response from {node_id}:", fg='green'))
+                        if isinstance(payload, dict):
+                            for key, value in payload.items():
+                                click.echo(f"   {key}: {value}")
+                        else:
+                            click.echo(f"   {payload}")
+                    
+                    elif topic_suffix == "to-node":
+                        # Show command request content
+                        click.echo(click.style(f"📥 Command Request to {node_id}:", fg='cyan'))
+                        if isinstance(payload, dict):
+                            for key, value in payload.items():
+                                click.echo(f"   {key}: {value}")
+                        else:
+                            click.echo(f"   {payload}")
+                        
+                except json.JSONDecodeError:
+                    logger.debug(f"Non-JSON message from {node_id}/{topic_suffix}: {message.payload.decode()}")
+                    # Show non-JSON message content
+                    click.echo(click.style(f"📥 Non-JSON Response from {node_id}/{topic_suffix}:", fg='yellow'))
+                    click.echo(f"   {message.payload.decode()}")
             return handler
-        
-        # Subscribe using selective subscription manager for better resource management
-        click.echo(click.style("🔄 Setting up topic subscriptions...", fg='yellow'))
         
         success_count = 0
         total_subscriptions = 0
+        failed_nodes = []
         
-        # Prioritize high-priority nodes for subscriptions
-        for node_id in connected_nodes[:50]:  # Limit to first 50 nodes to avoid overload
+        # Validate connections before subscription setup
+        valid_connections = []
+        for node_id in connected_nodes:  # Monitor ALL nodes
             mqtt_client = self.connection_pool.get_connection(node_id)
             if not mqtt_client:
+                logger.debug(f"No connection found for {node_id}")
                 continue
                 
+            # Validate connection is still alive
+            try:
+                if await mqtt_client.is_connected_async():
+                    valid_connections.append((node_id, mqtt_client))
+                else:
+                    logger.debug(f"Connection lost for {node_id} before subscription")
+                    failed_nodes.append(node_id)
+            except Exception as e:
+                logger.debug(f"Connection validation failed for {node_id}: {str(e)}")
+                failed_nodes.append(node_id)
+                continue
+        
+        logger.debug(f"Valid connections for subscription: {len(valid_connections)}/{len(connected_nodes[:50])}")
+        
+        # Perform a quick health check on all valid connections
+        healthy_connections = []
+        for node_id, mqtt_client in valid_connections:
+            try:
+                # Quick health check with timeout
+                health_check = asyncio.create_task(mqtt_client.is_connected_async())
+                is_healthy = await asyncio.wait_for(health_check, timeout=3.0)
+                
+                if is_healthy:
+                    healthy_connections.append((node_id, mqtt_client))
+                else:
+                    logger.debug(f"Health check failed for {node_id}")
+                    failed_nodes.append(node_id)
+            except asyncio.TimeoutError:
+                logger.debug(f"Health check timeout for {node_id}")
+                failed_nodes.append(node_id)
+            except Exception as e:
+                logger.debug(f"Health check error for {node_id}: {str(e)}")
+                failed_nodes.append(node_id)
+        
+        logger.debug(f"Healthy connections after health check: {len(healthy_connections)}/{len(valid_connections)}")
+        
+        # Set up subscriptions for healthy connections
+        click.echo(click.style("Setting up topic subscriptions...", fg='yellow'))
+        
+        for i, (node_id, mqtt_client) in enumerate(healthy_connections):
             node_success = True
+            node_subscriptions = 0
+            
+            # Show progress every 10 nodes
+            if i % 10 == 0:
+                click.echo(click.style(f"   Processing subscriptions for node {i+1}/{len(healthy_connections)}...", fg='blue'))
+            
             for topic_suffix in topics:
                 full_topic = f"node/{node_id}/{topic_suffix}"
                 handler = create_message_handler(node_id, topic_suffix)
@@ -395,15 +443,25 @@ class RMNodeManager:
                 try:
                     # Use QoS 0 for better performance and ESP RainMaker compatibility
                     if await mqtt_client.subscribe_async(full_topic, qos=0, callback=handler):
-                        logger.debug(f"Subscribed to {full_topic}")
+                        logger.debug(f"Subscribed to {full_topic} for {node_id}")
                         total_subscriptions += 1
+                        node_subscriptions += 1
                     else:
-                        logger.debug(f"Failed to subscribe to {full_topic}")
+                        logger.error(f"Failed to subscribe to {full_topic} for {node_id} - returned False")
                         node_success = False
+                        failed_nodes.append(node_id)
                         break  # Skip remaining topics for this node if one fails
                 except Exception as e:
-                    logger.debug(f"Error subscribing to {full_topic}: {str(e)}")
+                    error_msg = str(e)
+                    logger.error(f"Exception subscribing to {full_topic} for {node_id}: {error_msg}")
+                    if "Bad file descriptor" in error_msg:
+                        logger.debug(f"Connection lost for {node_id} during subscription to {full_topic}: {error_msg}")
+                    elif "Failed to connect" in error_msg:
+                        logger.debug(f"Connection failed for {node_id} during subscription to {full_topic}: {error_msg}")
+                    else:
+                        logger.debug(f"Unexpected error subscribing to {full_topic}: {error_msg}")
                     node_success = False
+                    failed_nodes.append(node_id)
                     break  # Skip remaining topics for this node if one fails
             
             if node_success:
@@ -414,10 +472,27 @@ class RMNodeManager:
                 await asyncio.sleep(0.1)
                     
         # Show a single summary message
-        if success_count == min(len(connected_nodes), 50):
+        if success_count == len(healthy_connections):
             click.echo(click.style(f"✓ Monitoring {total_subscriptions} topic subscriptions on {success_count} nodes", fg='green'))
         else:
-            click.echo(click.style(f"⚠ Started monitoring with partial success: {success_count}/{min(len(connected_nodes), 50)} nodes", fg='yellow'))
+            click.echo(click.style(f"Started monitoring with partial success: {success_count}/{len(healthy_connections)} nodes", fg='yellow'))
+            
+        if failed_nodes:
+            logger.debug(f"Failed to set up subscriptions for nodes: {failed_nodes}")
+            click.echo(click.style(f"{len(failed_nodes)} nodes failed subscription setup", fg='yellow'))
+            
+        # Final summary
+        total_nodes_attempted = len(connected_nodes)
+        total_nodes_connected = len(valid_connections)
+        total_nodes_healthy = len(healthy_connections)
+        total_nodes_subscribed = success_count
+        
+        click.echo(click.style(f"Connection Summary:", fg='cyan'))
+        click.echo(click.style(f"   • Total nodes attempted: {total_nodes_attempted}", fg='white'))
+        click.echo(click.style(f"   • Successfully connected: {total_nodes_connected}", fg='green'))
+        click.echo(click.style(f"   • Healthy connections: {total_nodes_healthy}", fg='green'))
+        click.echo(click.style(f"   • Successfully subscribed: {total_nodes_subscribed}", fg='green'))
+        click.echo(click.style(f"   • Total subscriptions: {total_subscriptions}", fg='green'))
 
     def publish_to_all(self, topic_suffix: str, payload: str, qos: int = 1) -> int:
         """Publish message to all connected nodes."""
@@ -613,61 +688,57 @@ class RMNodeManager:
         return self.ota_status_history
 
     async def disconnect_all_nodes(self):
-        """Disconnect from all connected nodes."""
+        """Disconnect from all connected nodes with fast shutdown."""
         logger.debug("Disconnecting from all nodes...")
         
         if not self.connections:
             logger.debug("No connections to disconnect")
             return 0, 0
             
-        # Create disconnect tasks for all nodes
-        disconnect_tasks = []
-        for node_id in list(self.connections.keys()):
-            task = self._disconnect_single_node(node_id)
-            disconnect_tasks.append(task)
-            
-        if disconnect_tasks:
-            # Wait for all disconnect operations to complete
-            results = await asyncio.gather(*disconnect_tasks, return_exceptions=True)
-            
-            # Count successful disconnections
-            success_count = sum(1 for result in results if result and not isinstance(result, Exception))
-            failed_count = len(results) - success_count
-            
-            logger.debug(f"Disconnected from {success_count}/{len(results)} nodes")
-            return success_count, len(results)
+        # Fast shutdown: clear connections immediately without waiting for individual disconnects
+        # This prevents "Disconnect error: 4" messages from AWS IoT SDK
+        total_count = len(self.connections)
+        connections_to_clear = list(self.connections.items())
         
-        return 0, 0
-
-    async def _disconnect_single_node(self, node_id: str) -> bool:
-        """Disconnect from a single node."""
-        try:
-            if node_id in self.connections:
-                client = self.connections[node_id]
+        # Clear connections immediately
+        self.connections.clear()
+        
+        # Disconnect in background without waiting for results
+        for node_id, client in connections_to_clear:
+            try:
+                # Use silent disconnect to avoid error messages
+                asyncio.create_task(self._silent_disconnect_node(client))
+            except Exception:
+                # Ignore any disconnect errors during shutdown
+                pass
                 
-                # Disconnect the client
-                if await client.disconnect_async():
-                    # Remove from manager connections
-                    del self.connections[node_id]
-                    logger.debug(f"Successfully disconnected from {node_id}")
-                    return True
-                else:
-                    logger.debug(f"Failed to disconnect from {node_id}")
-                    return False
-            else:
-                logger.debug(f"Node {node_id} is not connected")
-                return False
-        except Exception as e:
-            logger.error(f"Error disconnecting from {node_id}: {str(e)}")
-            return False
+        logger.debug(f"Fast disconnect initiated for {total_count} nodes")
+        return total_count, total_count
+        
+    async def _silent_disconnect_node(self, client) -> bool:
+        """Silently disconnect a node without generating error messages."""
+        try:
+            # Disconnect without waiting for broker response
+            await client.disconnect_async()
+            return True
+        except Exception:
+            # Suppress all disconnect errors during shutdown
+            return True
 
     async def cleanup(self):
         """Fast cleanup - stop background tasks but skip full disconnection for speed."""
-        logger.debug("Starting fast cleanup...")
+        # Suppress all logging during cleanup to eliminate any output
+        logger.setLevel(logging.CRITICAL)
+        
         self.running = False
         
         # Set shutdown event to stop background tasks
         shutdown_event.set()
+        
+        # Clear all connections immediately without any disconnect attempts
+        # This prevents any AWS IoT SDK disconnect operations
+        if hasattr(self, 'connections'):
+            self.connections.clear()
         
         # Stop background tasks without waiting for full disconnection
         # This is much faster and suitable for ESP RainMaker's 20s keep-alive
@@ -675,7 +746,6 @@ class RMNodeManager:
         
         # For ESP RainMaker, the connections will timeout naturally (20s keep-alive)
         # No need to explicitly disconnect each node for faster exit
-        logger.debug("Fast cleanup completed")
 
 # Global manager instance
 manager: Optional[RMNodeManager] = None
@@ -688,6 +758,12 @@ def handle_exception(loop, context):
 
 def cleanup_and_exit():
     """Fast cleanup and exit the program."""
+    # Suppress AWS IoT SDK logging during shutdown to eliminate error messages
+    _suppress_aws_logging_globally()
+    
+    # Suppress all logging during shutdown
+    logging.getLogger().setLevel(logging.CRITICAL)
+    
     if manager and loop:
         try:
             if loop.is_running():
@@ -699,12 +775,34 @@ def cleanup_and_exit():
                 # If loop is not running, run cleanup directly
                 loop.run_until_complete(manager.cleanup())
         except Exception as e:
-            logger.debug(f"Fast exit, ignoring cleanup error: {str(e)}")
+            # Suppress all error output during shutdown
+            pass
     sys.exit(0)
+    
+def _suppress_aws_logging_globally():
+    """Globally suppress AWS IoT SDK logging during shutdown."""
+    # Suppress all AWS IoT SDK logging
+    for logger_name in ['AWSIoTPythonSDK', 
+                      'AWSIoTPythonSDK.core',
+                      'AWSIoTPythonSDK.core.protocol.internal.clients',
+                      'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                      'AWSIoTPythonSDK.core.protocol.internal.workers',
+                      'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                      'AWSIoTPythonSDK.core.protocol.internal.events',
+                      'AWSIoTPythonSDK.core.protocol.internal.connection',
+                      'AWSIoTPythonSDK.core.protocol.internal.threading',
+                      'AWSIoTPythonSDK.core.protocol.internal.websocket']:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.CRITICAL)
+    
+    # Also suppress any other potential verbose loggers
+    for logger_name in ['paho.mqtt', 'paho.mqtt.client', 'paho.mqtt.publish']:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.CRITICAL)
 
 def signal_handler(signum, frame):
     """Handle interrupt signals."""
-    click.echo("\nExiting...")
+    # Silent exit without any output
     cleanup_and_exit()
 
 @click.command()
@@ -778,13 +876,16 @@ def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: boo
                     click.echo(click.style("✗ Failed to connect to any nodes", fg='red'))
                     sys.exit(1)
                     
+                # Start background listeners after a brief delay to ensure connections are stable
+                await asyncio.sleep(1.0)  # Wait 1 second for connections to stabilize
+                
                 # Start background listeners
                 await manager.start_background_listeners()
                 
                 # Set debug level for persistent shell if debug mode is enabled
                 if debug:
                     logger.shell_logger.setLevel(logging.DEBUG)
-                    click.echo(click.style("🔍 Debug mode enabled for interactive shell", fg='yellow'))
+                    click.echo(click.style("Debug mode enabled for interactive shell", fg='yellow'))
                     app_logger.info("Debug mode enabled for interactive shell")
                 
                 # Import and start the interactive shell
@@ -807,8 +908,7 @@ def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: boo
         loop.run_until_complete(setup_and_run())
         
     except KeyboardInterrupt:
-        app_logger.info("Shutdown requested by user")
-        click.echo("\n\nShutdown requested by user")
+        # Silent shutdown without logging or output
         cleanup_and_exit()
     except Exception as e:
         # Log the crash with full context
@@ -816,13 +916,13 @@ def main(cert_path: Tuple[str, ...], broker_id: str, config_dir: str, debug: boo
         app_logger.error(f"Critical error in main function: {str(e)}")
         click.echo(click.style(f"✗ Error: {str(e)}", fg='red'))
         cleanup_and_exit()
-        sys.exit(1)
     finally:
-        # Cleanup logging
+        # Cleanup logging silently
         try:
             logger.cleanup()
         except Exception as cleanup_error:
-            print(f"Error during logging cleanup: {cleanup_error}")
+            # Suppress cleanup error output during shutdown
+            pass
         
         if loop:
             loop.close() 

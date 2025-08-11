@@ -45,15 +45,19 @@ class NodeMonitoringProfile:
 class AdaptiveMonitor:
     """Adaptive monitoring system that adjusts based on node behavior."""
     
-    def __init__(self, max_concurrent_monitors: int = 50):
+    def __init__(self, max_concurrent_monitors: int = 0):  # 0 = unlimited
         self.max_concurrent_monitors = max_concurrent_monitors
         self.node_profiles: Dict[str, NodeMonitoringProfile] = {}
         self.active_monitors: Set[str] = set()
         self.monitoring_tasks: Dict[str, asyncio.Task] = {}
         self.event_handlers: Dict[str, List[Callable]] = defaultdict(list)
         
-        # Resource management
-        self.monitor_semaphore = asyncio.Semaphore(max_concurrent_monitors)
+        # Resource management - unlimited if set to 0
+        if max_concurrent_monitors > 0:
+            self.monitor_semaphore = asyncio.Semaphore(max_concurrent_monitors)
+        else:
+            self.monitor_semaphore = None
+            
         self.is_running = False
         
         # Statistics
@@ -69,11 +73,14 @@ class AdaptiveMonitor:
     async def start(self):
         """Start the adaptive monitoring system."""
         self.is_running = True
-        self.logger.info(f"Adaptive monitor started with max {self.max_concurrent_monitors} concurrent monitors")
+        self.logger.info("Adaptive monitor started")
         
     async def stop(self):
         """Stop all monitoring tasks."""
         self.is_running = False
+        
+        # Suppress logging during shutdown
+        self.logger.setLevel(logging.CRITICAL)
         
         # Cancel all monitoring tasks
         for task in self.monitoring_tasks.values():
@@ -82,7 +89,6 @@ class AdaptiveMonitor:
         await asyncio.gather(*self.monitoring_tasks.values(), return_exceptions=True)
         self.monitoring_tasks.clear()
         self.active_monitors.clear()
-        self.logger.info("Adaptive monitor stopped")
         
     def add_node(self, node_id: str, initial_level: MonitoringLevel = MonitoringLevel.NORMAL,
                 topics: Set[str] = None):
@@ -99,9 +105,8 @@ class AdaptiveMonitor:
         
         self.node_profiles[node_id] = profile
         
-        # Start monitoring if we have capacity
-        if len(self.active_monitors) < self.max_concurrent_monitors:
-            asyncio.create_task(self._start_monitoring_node(node_id))
+        # Start monitoring immediately (no capacity limits)
+        asyncio.create_task(self._start_monitoring_node(node_id))
             
     def remove_node(self, node_id: str):
         """Remove a node from monitoring."""
@@ -123,7 +128,14 @@ class AdaptiveMonitor:
         if node_id in self.active_monitors or not self.is_running:
             return
             
-        async with self.monitor_semaphore:
+        # No capacity limits - start monitoring immediately
+        if self.monitor_semaphore:
+            async with self.monitor_semaphore:
+                self.active_monitors.add(node_id)
+                task = asyncio.create_task(self._monitor_node_loop(node_id))
+                self.monitoring_tasks[node_id] = task
+        else:
+            # Unlimited monitoring
             self.active_monitors.add(node_id)
             task = asyncio.create_task(self._monitor_node_loop(node_id))
             self.monitoring_tasks[node_id] = task

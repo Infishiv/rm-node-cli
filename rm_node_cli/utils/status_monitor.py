@@ -23,14 +23,14 @@ class StatusMonitor:
         connected_nodes = self.manager.connection_pool.get_connected_nodes()
         
         # Basic stats
-        click.echo(click.style("\n📊 Connection Pool Status", fg='blue', bold=True))
+        click.echo(click.style("\nConnection Pool Status", fg='blue', bold=True))
         click.echo(f"Connected nodes: {len(connected_nodes)}")
         click.echo(f"Pool configuration: {self.manager.connection_pool.config.max_concurrent_connections} max connections")
         click.echo(f"Rate limit: {self.manager.connection_pool.config.connection_rate_limit} connections/second")
         click.echo(f"Batch size: {self.manager.connection_pool.config.batch_size}")
         
         if detailed and pool_stats:
-            click.echo(click.style("\n🔍 Detailed Node Statistics", fg='yellow', bold=True))
+            click.echo(click.style("\nDetailed Node Statistics", fg='yellow', bold=True))
             
             # Group nodes by state
             states = {}
@@ -66,7 +66,7 @@ class StatusMonitor:
         """Show adaptive monitoring status."""
         monitoring_summary = self.manager.adaptive_monitor.get_monitoring_summary()
         
-        click.echo(click.style("\n🔄 Adaptive Monitoring Status", fg='cyan', bold=True))
+        click.echo(click.style("\nAdaptive Monitoring Status", fg='cyan', bold=True))
         click.echo(f"Total nodes: {monitoring_summary['total_nodes']}")
         click.echo(f"Active monitors: {monitoring_summary['active_monitors']}")
         click.echo(f"Nodes with errors: {monitoring_summary['nodes_with_errors']}")
@@ -79,7 +79,7 @@ class StatusMonitor:
                 
         # Show error nodes
         if monitoring_summary['error_nodes']:
-            click.echo(click.style("\n⚠️  Nodes with Errors", fg='red', bold=True))
+            click.echo(click.style("\nNodes with Errors", fg='red', bold=True))
             for error_node in monitoring_summary['error_nodes']:
                 click.echo(f"  {error_node['node_id']}: {error_node['error_count']} errors, "
                           f"level: {error_node['level']}")
@@ -151,7 +151,7 @@ class StatusMonitor:
             
     def show_recommendations(self):
         """Show recommendations for optimization."""
-        click.echo(click.style("\n💡 Optimization Recommendations", fg='blue', bold=True))
+        click.echo(click.style("\nOptimization Recommendations", fg='blue', bold=True))
         
         # Analyze connection pool
         pool_stats = self.manager.connection_pool.get_connection_stats()
@@ -162,26 +162,26 @@ class StatusMonitor:
                                  if stats['state'] == 'circuit_open']
                                  
             if len(failed_nodes) > 10:
-                click.echo(f"⚠️  {len(failed_nodes)} nodes failed - consider investigating network issues")
+                click.echo(f"{len(failed_nodes)} nodes failed - consider investigating network issues")
                 
             if len(circuit_open_nodes) > 5:
-                click.echo(f"⚠️  {len(circuit_open_nodes)} nodes have circuit breaker open - "
+                click.echo(f"{len(circuit_open_nodes)} nodes have circuit breaker open - "
                           "consider increasing circuit breaker timeout")
                           
         # Analyze monitoring
         monitoring_summary = self.manager.adaptive_monitor.get_monitoring_summary()
         if monitoring_summary['nodes_with_errors'] > monitoring_summary['total_nodes'] * 0.1:
-            click.echo("⚠️  High error rate in monitoring - consider adjusting monitoring levels")
+            click.echo("High error rate in monitoring - consider adjusting monitoring levels")
             
         # Analyze subscriptions
         sub_summary = self.manager.subscription_manager.get_subscription_summary()
         utilization = float(sub_summary['utilization'].rstrip('%'))
         if utilization > 80:
-            click.echo("⚠️  High subscription utilization - consider increasing max_subscriptions")
+            click.echo("High subscription utilization - consider increasing max_subscriptions")
         elif utilization < 20:
-            click.echo("💡 Low subscription utilization - you could increase monitoring coverage")
+            click.echo("Low subscription utilization - you could increase monitoring coverage")
             
-        click.echo("📖 For more optimization tips, see the documentation")
+        click.echo("For more optimization tips, see the documentation")
         
     def show_all_status(self, detailed: bool = False):
         """Show comprehensive status overview."""

@@ -43,18 +43,18 @@ class ConnectionStats:
 @dataclass
 class PoolConfig:
     """Configuration for the connection pool optimized for ESP RainMaker."""
-    max_concurrent_connections: int = 100  # AWS IoT has limits
-    connection_rate_limit: int = 25  # increased for faster startup
-    batch_size: int = 15  # smaller batches for better progress feedback
-    circuit_breaker_threshold: int = 3  # failures before circuit opens
-    circuit_breaker_timeout: int = 120  # 2 minutes (shorter for faster retry)
-    connection_timeout: int = 8  # optimized for ESP RainMaker
-    operation_timeout: int = 6  # optimized for ESP RainMaker
-    health_check_interval: int = 25  # aligned with ESP RainMaker 20s keep-alive + margin
-    max_retries: int = 2  # fewer retries for faster startup
-    retry_backoff_base: float = 1.5  # shorter backoff
-    jitter_range: float = 0.2  # slightly more jitter
-    esp_keepalive_time: int = 20  # ESP RainMaker keep-alive period
+    max_concurrent_connections: int = 0  # Unlimited connections
+    connection_rate_limit: int = 0       # Unlimited rate
+    batch_size: int = 0                  # No batching
+    circuit_breaker_threshold: int = 3   # failures before circuit opens
+    circuit_breaker_timeout: int = 120   # 2 minutes (shorter for faster retry)
+    connection_timeout: int = 8          # optimized for ESP RainMaker
+    operation_timeout: int = 6           # optimized for ESP RainMaker
+    health_check_interval: int = 25      # aligned with ESP RainMaker 20s keep-alive + margin
+    max_retries: int = 2                 # fewer retries for faster startup
+    retry_backoff_base: float = 1.5      # shorter backoff
+    jitter_range: float = 0.2            # slightly more jitter
+    esp_keepalive_time: int = 20        # ESP RainMaker keep-alive period
 
 
 class ConnectionPool:
@@ -68,9 +68,17 @@ class ConnectionPool:
         self.pending_connections: Set[str] = set()
         self.circuit_breaker_timers: Dict[str, float] = {}
         
-        # Rate limiting
-        self.connection_semaphore = asyncio.Semaphore(self.config.max_concurrent_connections)
-        self.rate_limiter = asyncio.Semaphore(self.config.connection_rate_limit)
+        # Rate limiting - unlimited if set to 0
+        if self.config.max_concurrent_connections > 0:
+            self.connection_semaphore = asyncio.Semaphore(self.config.max_concurrent_connections)
+        else:
+            self.connection_semaphore = None
+            
+        if self.config.connection_rate_limit > 0:
+            self.rate_limiter = asyncio.Semaphore(self.config.connection_rate_limit)
+        else:
+            self.rate_limiter = None
+            
         self.rate_limiter_reset_task = None
         
         # Health monitoring
@@ -85,36 +93,46 @@ class ConnectionPool:
         self.is_running = True
         self.rate_limiter_reset_task = asyncio.create_task(self._reset_rate_limiter())
         self.health_check_task = asyncio.create_task(self._health_check_loop())
-        self.logger.info(f"Connection pool started with max {self.config.max_concurrent_connections} connections")
+        self.logger.info("Connection pool started")
         
     async def stop(self):
-        """Stop the connection pool and disconnect all nodes."""
+        """Stop the connection pool with fast shutdown."""
         self.is_running = False
         
+        # Suppress AWS IoT SDK logging during shutdown to eliminate error messages
+        self._suppress_aws_logging()
+        
+        # Suppress our own logging during shutdown
+        self.logger.setLevel(logging.CRITICAL)
+        
+        # Cancel background tasks immediately
         if self.rate_limiter_reset_task:
             self.rate_limiter_reset_task.cancel()
         if self.health_check_task:
             self.health_check_task.cancel()
             
-        # Disconnect all nodes
+        # Fast disconnect without waiting for individual operations
         await self.disconnect_all()
-        self.logger.info("Connection pool stopped")
         
     async def connect_nodes_batch(self, nodes: List[Tuple[str, str, str]], 
                                  mqtt_operations_class) -> Tuple[int, int]:
-        """Connect nodes in batches with rate limiting."""
+        """Connect nodes with rate limiting (unlimited if batch_size=0)."""
         total_nodes = len(nodes)
         successful = 0
         
-        # Process nodes in batches
-        for i in range(0, total_nodes, self.config.batch_size):
-            batch = nodes[i:i + self.config.batch_size]
-            batch_successful = await self._connect_batch(batch, mqtt_operations_class)
-            successful += batch_successful
-            
-            # Minimal delay between batches for faster progress
-            if i + self.config.batch_size < total_nodes:
-                await asyncio.sleep(0.1)  # Reduced from 0.5s
+        if self.config.batch_size > 0:
+            # Process nodes in batches
+            for i in range(0, total_nodes, self.config.batch_size):
+                batch = nodes[i:i + self.config.batch_size]
+                batch_successful = await self._connect_batch(batch, mqtt_operations_class)
+                successful += batch_successful
+                
+                # Minimal delay between batches for faster progress
+                if i + self.config.batch_size < total_nodes:
+                    await asyncio.sleep(0.1)  # Reduced from 0.5s
+        else:
+            # Unlimited mode - process all nodes at once
+            successful = await self._connect_batch(nodes, mqtt_operations_class)
                 
         return successful, total_nodes
         
@@ -141,10 +159,14 @@ class ConnectionPool:
             return False
             
         # Acquire rate limiter
-        await self.rate_limiter.acquire()
-        
+        if self.rate_limiter:
+            await self.rate_limiter.acquire()
+            
         # Acquire connection semaphore
-        async with self.connection_semaphore:
+        if self.connection_semaphore:
+            async with self.connection_semaphore:
+                return await self._do_connection(node_id, cert_path, key_path, mqtt_operations_class)
+        else:
             return await self._do_connection(node_id, cert_path, key_path, mqtt_operations_class)
             
     async def _do_connection(self, node_id: str, cert_path: str, key_path: str,
@@ -199,7 +221,7 @@ class ConnectionPool:
                     self.logger.warning(error_msg)
                     if attempt == 0:  # Only show error on first attempt to reduce noise
                         import click
-                        click.echo(click.style(f"⚠ {error_msg}", fg='yellow'))
+                        click.echo(click.style(f"{error_msg}", fg='yellow'))
                     await self._handle_connection_failure(node_id, "Connection timeout", attempt)
                     
                 except Exception as e:
@@ -260,11 +282,12 @@ class ConnectionPool:
         while self.is_running:
             await asyncio.sleep(1.0)
             # Release all permits and re-initialize
-            for _ in range(self.config.connection_rate_limit):
-                try:
-                    self.rate_limiter.release()
-                except ValueError:
-                    break  # Semaphore is already at max
+            if self.rate_limiter:
+                for _ in range(self.config.connection_rate_limit):
+                    try:
+                        self.rate_limiter.release()
+                    except ValueError:
+                        break  # Semaphore is already at max
                     
     async def _health_check_loop(self):
         """Background health check for connections."""
@@ -322,20 +345,33 @@ class ConnectionPool:
         return 0
         
     async def disconnect_all(self):
-        """Disconnect all nodes."""
-        tasks = []
-        for node_id, mqtt_client in self.connections.items():
-            try:
-                task = mqtt_client.disconnect_async()
-                tasks.append(task)
-            except Exception as e:
-                self.logger.error(f"Error disconnecting {node_id}: {str(e)}")
-                
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        """Disconnect all nodes with fast shutdown to avoid error messages."""
+        if not self.connections:
+            return
             
+        # Clear connections immediately without waiting for individual disconnects
+        # This prevents "Disconnect error: 4" messages from AWS IoT SDK
+        connections_to_clear = list(self.connections.items())
         self.connections.clear()
         self.connection_states.clear()
+        
+        # Disconnect in background without waiting for results
+        for node_id, mqtt_client in connections_to_clear:
+            try:
+                # Use silent disconnect to avoid error messages
+                asyncio.create_task(self._silent_disconnect(mqtt_client))
+            except Exception:
+                # Ignore any disconnect errors during shutdown
+                pass
+                
+    async def _silent_disconnect(self, mqtt_client):
+        """Silently disconnect MQTT client without generating error messages."""
+        try:
+            # Disconnect without waiting for broker response
+            await mqtt_client.disconnect_async()
+        except Exception:
+            # Suppress all disconnect errors during shutdown
+            pass
         
     def _get_broker(self):
         """Get broker URL - to be set by the main manager."""
@@ -345,3 +381,24 @@ class ConnectionPool:
     def set_broker(self, broker_url: str):
         """Set the broker URL."""
         self._broker_url = broker_url
+        
+    def _suppress_aws_logging(self):
+        """Suppress AWS IoT SDK logging during shutdown."""
+        # Suppress all AWS IoT SDK logging
+        for logger_name in ['AWSIoTPythonSDK', 
+                          'AWSIoTPythonSDK.core',
+                          'AWSIoTPythonSDK.core.protocol.internal.clients',
+                          'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                          'AWSIoTPythonSDK.core.protocol.internal.workers',
+                          'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                          'AWSIoTPythonSDK.core.protocol.internal.events',
+                          'AWSIoTPythonSDK.core.protocol.internal.connection',
+                          'AWSIoTPythonSDK.core.protocol.internal.threading',
+                          'AWSIoTPythonSDK.core.protocol.internal.websocket']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.CRITICAL)
+        
+        # Also suppress any other potential verbose loggers
+        for logger_name in ['paho.mqtt', 'paho.mqtt.client', 'paho.mqtt.publish']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.CRITICAL)

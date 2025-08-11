@@ -63,7 +63,7 @@ class MQTTOperations:
                           'AWSIoTPythonSDK.core.protocol.internal.workers',
                           'AWSIoTPythonSDK.core.protocol.internal.defaults',
                           'AWSIoTPythonSDK.core.protocol.internal.events']:
-            logging.getLogger(logger_name).setLevel(logging.ERROR)
+            logging.getLogger(logger_name).setLevel(logging.CRITICAL)  # Set to CRITICAL to suppress all messages
 
         self._configure_mqtt_client()
 
@@ -85,46 +85,6 @@ class MQTTOperations:
         
         # Set keep-alive to match ESP RainMaker
         self.mqtt_client.configureMQTTOperationTimeout(6)  # 6 sec for fast response
-
-    async def _check_connection_async(self):
-        """Check connection status asynchronously."""
-        try:
-            # Only check every ping_interval seconds
-            current_time = time.time()
-            if current_time - self.last_ping < self.ping_interval:
-                return self.connected
-                
-            # Try to publish to a test topic
-            test_topic = f"$aws/things/{self.node_id}/ping"
-            result = await self.publish_async(test_topic, "", 0)
-            
-            self.connected = bool(result)
-            self.last_ping = current_time
-            return self.connected
-            
-        except Exception as e:
-            self.connected = False
-            return False
-
-    def _check_connection(self):
-        """Check connection status by attempting to publish to a test topic."""
-        try:
-            # Only check every ping_interval seconds
-            current_time = time.time()
-            if current_time - self.last_ping < self.ping_interval:
-                return self.connected
-                
-            # Try to publish to a test topic
-            test_topic = f"$aws/things/{self.node_id}/ping"
-            result = self.mqtt_client.publish(test_topic, "", 0)
-            
-            self.connected = bool(result)
-            self.last_ping = current_time
-            return self.connected
-            
-        except Exception as e:
-            self.connected = False
-            return False
 
     async def connect_async(self):
         """Connect to MQTT broker asynchronously with status tracking"""
@@ -160,30 +120,136 @@ class MQTTOperations:
     async def disconnect_async(self):
         """Disconnect asynchronously from MQTT broker."""
         try:
+            # Use silent disconnect to avoid "Disconnect error: 4" messages
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, self.mqtt_client.disconnect)
-            if result:
-                self.connected = False
+            result = await loop.run_in_executor(None, self._silent_disconnect)
+            self.connected = False
             return result
-        except Exception as e:
-            raise MQTTOperationsException(f"Failed to disconnect: {str(e)}")
+        except Exception:
+            # Suppress disconnect errors during shutdown
+            self.connected = False
+            return True
 
     def disconnect(self):
         try:
-            result = self.mqtt_client.disconnect()
-            if result:
-                self.connected = False
+            # Use silent disconnect to avoid "Disconnect error: 4" messages
+            result = self._silent_disconnect()
+            self.connected = False
             return result
-        except Exception as e:
-            raise MQTTOperationsException(f"Failed to disconnect: {str(e)}")
+        except Exception:
+            # Suppress disconnect errors during shutdown
+            self.connected = False
+            return True
+            
+    def _silent_disconnect(self):
+        """Silently disconnect without generating error messages."""
+        try:
+            # Temporarily suppress AWS IoT SDK logging during disconnect
+            self._suppress_aws_logging()
+            
+            # Disconnect without waiting for broker response
+            result = self.mqtt_client.disconnect()
+            
+            # Restore logging
+            self._restore_aws_logging()
+            return result
+        except Exception:
+            # Restore logging even if disconnect fails
+            self._restore_aws_logging()
+            # Suppress all disconnect errors
+            return True
+            
+    def _suppress_aws_logging(self):
+        """Temporarily suppress AWS IoT SDK logging during disconnect."""
+        for logger_name in ['AWSIoTPythonSDK', 
+                          'AWSIoTPythonSDK.core',
+                          'AWSIoTPythonSDK.core.protocol.internal.clients',
+                          'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                          'AWSIoTPythonSDK.core.protocol.internal.workers',
+                          'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                          'AWSIoTPythonSDK.core.protocol.internal.events']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.CRITICAL)
+            
+    def _restore_aws_logging(self):
+        """Restore AWS IoT SDK logging to normal level."""
+        for logger_name in ['AWSIoTPythonSDK', 
+                          'AWSIoTPythonSDK.core',
+                          'AWSIoTPythonSDK.core.protocol.internal.clients',
+                          'AWSIoTPythonSDK.core.protocol.mqtt_core',
+                          'AWSIoTPythonSDK.core.protocol.internal.workers',
+                          'AWSIoTPythonSDK.core.protocol.internal.defaults',
+                          'AWSIoTPythonSDK.core.protocol.internal.events']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.ERROR)
 
-    def is_connected(self):
-        """Check if currently connected"""
-        return self._check_connection()
+    async def is_connected_async(self) -> bool:
+        """Check if connected asynchronously with better validation."""
+        try:
+            # Quick check first
+            if not self.connected:
+                return False
+                
+            # Only check every ping_interval seconds to avoid overwhelming
+            current_time = time.time()
+            if current_time - self.last_ping < self.ping_interval:
+                return self.connected
+                
+            # Try to publish to a test topic with timeout
+            test_topic = f"$aws/things/{self.node_id}/ping"
+            try:
+                # Use a short timeout for ping operations
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, 
+                        lambda: self.mqtt_client.publish(test_topic, "", 0)),
+                    timeout=2.0  # 2 second timeout for ping
+                )
+                
+                self.connected = bool(result)
+                self.last_ping = current_time
+                return self.connected
+                
+            except asyncio.TimeoutError:
+                # Ping timed out, connection might be stale
+                self.connected = False
+                return False
+            except Exception:
+                # Any other error indicates connection issues
+                self.connected = False
+                return False
+                
+        except Exception:
+            self.connected = False
+            return False
 
-    async def is_connected_async(self):
-        """Check if currently connected asynchronously"""
-        return await self._check_connection_async()
+    def is_connected(self) -> bool:
+        """Check if connected with better validation."""
+        try:
+            # Quick check first
+            if not self.connected:
+                return False
+                
+            # Only check every ping_interval seconds to avoid overwhelming
+            current_time = time.time()
+            if current_time - self.last_ping < self.ping_interval:
+                return self.connected
+                
+            # Try to publish to a test topic
+            test_topic = f"$aws/things/{self.node_id}/ping"
+            try:
+                result = self.mqtt_client.publish(test_topic, "", 0)
+                self.connected = bool(result)
+                self.last_ping = current_time
+                return self.connected
+            except Exception:
+                # Any error indicates connection issues
+                self.connected = False
+                return False
+                
+        except Exception:
+            self.connected = False
+            return False
 
     async def publish_async(self, topic, payload, qos=1):
         """Publish message asynchronously with retry logic and optional serialization"""
